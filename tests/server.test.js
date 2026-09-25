@@ -32,15 +32,15 @@ test('30 students can join, share stages and answers, then submit once',async t=
   assert(students.every(x=>x.status===200));
   assert.equal(students[0].data.team.id,made.data.team.id);
   const a=students[0].cookie,b=students[1].cookie;
-  const live=await fetch(base+'/api/events',{headers:{Cookie:b}});
-  assert.equal(live.status,200);
-  const reader=live.body.getReader();
-  await reader.read(); // initial connection comment
+  const live=await Promise.all(students.map(student=>fetch(base+'/api/events',{headers:{Cookie:student.cookie}})));
+  assert(live.every(response=>response.status===200));
+  const readers=live.map(response=>response.body.getReader());
+  await Promise.all(readers.map(reader=>reader.read())); // initial connection comments
   const update=await request('/api/team/action',{type:'map',point:'A'},a);
   assert.equal(update.status,200);
-  const event=await Promise.race([reader.read(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('No live team update')),2000))]);
-  assert(new TextDecoder().decode(event.value).includes('"mapPoint":"A"'));
-  await reader.cancel();
+  const events=await Promise.race([Promise.all(readers.map(reader=>reader.read())),new Promise((_,reject)=>setTimeout(()=>reject(new Error('No live team update')),2000))]);
+  assert(events.every(event=>new TextDecoder().decode(event.value).includes('"mapPoint":"A"')));
+  await Promise.all(readers.map(reader=>reader.cancel()));
   await request('/api/team/action',{type:'field',key:'location',value:'River valley'},b);
   await request('/api/team/action',{type:'stage',stage:2},a);
   const seen=await request('/api/me',undefined,b);
