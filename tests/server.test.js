@@ -27,11 +27,16 @@ test('30 students can join, share stages and answers, then submit once',async t=
   assert.equal(teacher.status,200);
   const made=await request('/api/teacher/teams',{name:'River Makers'},teacher.cookie);
   assert.equal(made.status,201);
+  const second=await request('/api/teacher/teams',{name:'Mountain Group'},teacher.cookie);
+  assert.equal(second.status,201);
   const code=made.data.team.code;
   const students=await Promise.all(Array.from({length:30},(_,i)=>request('/api/auth/team',{name:`Student ${i+1}`,code})));
   assert(students.every(x=>x.status===200));
   assert.equal(students[0].data.team.id,made.data.team.id);
   const a=students[0].cookie,b=students[1].cookie;
+  const outsider=await request('/api/auth/team',{name:'Other Student',code:second.data.team.code});
+  assert.equal(outsider.status,200);
+  assert.equal((await request(`/api/teacher/teams/${made.data.team.id}`,undefined,outsider.cookie)).status,401);
   const live=await Promise.all(students.map(student=>fetch(base+'/api/events',{headers:{Cookie:student.cookie}})));
   assert(live.every(response=>response.status===200));
   const readers=live.map(response=>response.body.getReader());
@@ -48,6 +53,7 @@ test('30 students can join, share stages and answers, then submit once',async t=
   assert.equal(seen.data.team.state.location,'River valley');
   assert.equal(seen.data.team.state.stage,2);
   assert.equal(seen.data.roster.length,30);
+  assert.equal((await request('/api/me',undefined,outsider.cookie)).data.team.state.mapPoint,'');
   const early=await request('/api/team/submit',{},b);
   assert.equal(early.status,400);
   assert(early.data.gaps.includes('tech'));
