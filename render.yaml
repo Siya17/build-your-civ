@@ -3,7 +3,7 @@ services:
     name: build-your-civ
     runtime: node
     plan: starter
-    buildCommand: npm install --omit=dev
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /api/health
     disk:
@@ -11,11 +11,17 @@ services:
       mountPath: /var/data
       sizeGB: 1
     envVars:
+      - key: NODE_VERSION
+        value: "24"
       - key: NODE_ENV
         value: production
       - key: HOST
         value: 0.0.0.0
       - key: DATA_DIR
         value: /var/data
+      # Render terminates TLS in front of this process, so the socket address is the
+      # proxy's. Without this the whole class shares one sign-in rate-limit bucket.
+      - key: TRUST_PROXY
+        value: "1"
       - key: TEACHER_PASSWORD
         sync: false

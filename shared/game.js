@@ -40,6 +40,13 @@ export const trees = { tech, civic };
 export const textFields = ['location','terrain','resources','challenge','govt','economy','belief','geographyUse','impact','tradeoff','connection'];
 export const mapPoints = {A:[16.8,61.5],B:[14.2,39.4],C:[19.2,42.1],D:[26.4,45.8],E:[34.2,52.6],F:[36.6,38.2],G:[15.9,48.8],H:[43.8,71],I:[71.2,46.7],J:[78.8,61.5],K:[85.5,19.9]};
 
+// Join codes: no I, O, 0 or 1, so a code read aloud is hard to mishear.
+export const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const codeLength = 9;
+// Codes are read aloud in groups, so accept any spacing or punctuation around the characters.
+export const normalizeCode = value => String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g,'');
+export const isCodeShape = code => code.length === codeLength && [...code].every(character => codeAlphabet.includes(character));
+
 export function initialState() {
   return {stage:1,mapPoint:'',location:'',terrain:'',resources:'',challenge:'',tech:[],civic:[],govt:'',economy:'',belief:'',geographyUse:'',impact:'',tradeoff:'',connection:''};
 }

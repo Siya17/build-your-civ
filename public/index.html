@@ -6,9 +6,14 @@
   <meta name="theme-color" content="#123f3d" />
   <title>Build Your Own Civilization</title>
   <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="/map-points.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23123f3d'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' fill='%23e9b678'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
+  <a id="skip-link" class="skip-link" href="#main" hidden>Skip to main content</a>
   <div id="app"><div class="loading">Building your world…</div></div>
+  <!-- Outside #app so it survives every re-render: a live region that is replaced is not reliably announced. -->
+  <div id="notice" role="status" aria-live="polite"></div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
