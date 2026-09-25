@@ -248,6 +248,12 @@ test('sign-in limits use the forwarded address only when the proxy is trusted',l
 });
 
 test('static assets are cached by content and compressed',limit,async()=>{
+  for (const path of ['/bootstrap.js','/app.js','/shared/game.js','/shared/i18n.js']) {
+    const asset=await fetch(base+path);
+    assert.equal(asset.status,200,`${path} loads for the browser`);
+    assert.match(asset.headers.get('content-type'),/javascript/,`${path} is served as JavaScript`);
+    await asset.text();
+  }
   const first=await fetch(base+'/app.js');
   assert.equal(first.status,200);
   const etag=first.headers.get('etag');

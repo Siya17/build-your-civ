@@ -21,7 +21,7 @@ $env:TEACHER_PASSWORD = 'choose-a-long-private-password'
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). If no password is set in development, a temporary teacher password is printed in the terminal.
+Open the URL printed in the terminal (usually [http://127.0.0.1:5173](http://127.0.0.1:5173)). If that port is occupied, stop the older server before restarting this one; two servers would split live updates between connected students. If no password is set in development, a temporary teacher password is printed in the terminal.
 
 Run tests with `npm test`. The server stores activity data in `data/classroom.sqlite` and a local secret in `data/secret.key`. Back up the whole `data` directory after class. Do not commit or share it.
 

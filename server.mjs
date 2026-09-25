@@ -4,17 +4,32 @@ import { closeStore } from './server/store.js';
 
 const production = process.env.NODE_ENV === 'production';
 let teacherPassword = process.env.TEACHER_PASSWORD;
+let temporaryPassword = false;
 if (production && (!teacherPassword || teacherPassword.length < 12)) {
   throw new Error('Production requires TEACHER_PASSWORD with at least 12 characters');
 }
 if (!teacherPassword) {
   teacherPassword = randomBytes(12).toString('base64url');
-  console.log(`Development teacher password: ${teacherPassword}`);
+  temporaryPassword = true;
 }
 const host = process.env.HOST || '127.0.0.1';
-const port = Number(process.env.PORT || 5173);
+const port = Number(process.env.PORT ?? 5173);
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  throw new Error('PORT must be an integer between 0 and 65535');
+}
 const server = createAppServer({teacherPassword,secureCookie:production || process.env.COOKIE_SECURE==='1'});
-server.listen(port,host,()=>console.log(`Build Your Civ: http://${host}:${port}`));
+server.on('error', error => {
+  console.error(error.code === 'EADDRINUSE'
+    ? `Port ${port} is already in use at ${host}. Stop the older server before restarting this one.`
+    : `Could not start the server: ${error.message}`);
+  closeStore();
+  process.exitCode = 1;
+});
+server.on('listening',()=>{
+  console.log(`Build Your Civ: http://${host}:${server.address().port}`);
+  if (temporaryPassword) console.log(`Development teacher password: ${teacherPassword}`);
+});
+server.listen(port,host);
 
 // A host redeploy arrives as SIGTERM. Without this the process dies holding open event
 // streams and an open database, leaving an unmerged WAL: a backup that copies only

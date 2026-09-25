@@ -282,9 +282,10 @@ app.addEventListener('input',event=>{
 app.addEventListener('focusin',event=>{if(event.target.dataset?.field!==undefined)postPresence(event.target.dataset.field)});
 app.addEventListener('focusout',event=>{const key=event.target.dataset?.field;if(key!==undefined){flushField(key);postPresence(null)}});
 
-// Paste and drop stay blocked to keep answers typed in class; copying your own work out is
-// allowed, since paste is blocked everywhere anyway and blocking copy only gets in the way.
-const inField=target=>target instanceof Element&&target.matches('input,textarea');
+// Paste and drop stay blocked for team answers; copying work out is allowed.
+// Sign-in credentials and join codes can be pasted. The classroom writing rule only
+// applies to the team's answers, which are marked with data-field.
+const inField=target=>target instanceof Element&&target.matches('[data-field]');
 function blockPaste(event){if(!inField(event.target))return;event.preventDefault();toast(L().pasteBlocked,'warn')}
 document.addEventListener('paste',blockPaste,true);
 document.addEventListener('drop',blockPaste,true);

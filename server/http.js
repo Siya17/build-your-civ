@@ -10,6 +10,7 @@ import { createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, g
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceFiles = {
   '/':['public/index.html','text/html; charset=utf-8'],
+  '/bootstrap.js':['public/bootstrap.js','text/javascript; charset=utf-8'],
   '/app.js':['public/app.js','text/javascript; charset=utf-8'],
   '/app.css':['public/app.css','text/css; charset=utf-8'],
   '/shared/game.js':['shared/game.js','text/javascript; charset=utf-8'],
