@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyAction, initialState, questStatus, submissionGaps } from '../shared/game.js';
+import { applyAction, initialState, questStatus, submissionGaps, codeTag, isCodeShape, normalizeCode } from '../shared/game.js';
 import { locations } from '../shared/world.js';
 import { sceneMarkup } from '../public/rpg.js';
 
@@ -71,6 +71,24 @@ test('a branch card does not replace the original flowchart choice',()=>{
   state=applyAction(state,{type:'pick',tree:'tech',id:'preservation'});
   assert(submissionGaps(state).includes('tech'));
   assert.throws(()=>applyAction(state,{type:'event',id:'encounter',choice:'share'}),/technology path/);
+});
+
+test('join codes are built from the team name and still accept older codes',()=>{
+  assert.equal(codeTag('Team A'),'A');
+  assert.equal(codeTag('team k'),'K');
+  assert.equal(codeTag('River Makers!'),'RIVERMAKER');
+  assert.equal(codeTag('さくら'),'TEAM','a name without Latin letters still gets a tag');
+  assert(isCodeShape(normalizeCode('a-427')));
+  assert(isCodeShape('RIVERMAKER123'));
+  assert(isCodeShape('ABCDEFGH2'),'a nine-character code from before still works');
+  assert(!isCodeShape('A42'));
+  assert(!isCodeShape('ABC'));
+});
+
+test('a fixed homeland cannot be changed',()=>{
+  const state={...initialState(),mapPoint:'C',avatar:'C',fixedPoint:'C'};
+  assert.throws(()=>applyAction(state,{type:'map',point:'D'}),/homeland/);
+  assert.equal(applyAction(state,{type:'map',point:'C'}).mapPoint,'C');
 });
 
 test('every map point has distinct sourced bilingual geography notes',()=>{

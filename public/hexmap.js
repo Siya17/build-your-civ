@@ -1,6 +1,6 @@
 // Draws a team's homeland as an SVG hex map. Everything is markup with SVG attributes and
 // CSS classes: the page's CSP forbids inline styles.
-import { hexes, center, generateLand, improvements, terrains, revealRadius, settlementSize, fits } from '/shared/land.js';
+import { hexes, center, generateLand, improvements, terrains, settlementSize, fits, isRevealed, route, neighbourDirection, hazardOf, DIRECTIONS } from '/shared/land.js';
 import { iconPath } from '/rpg.js';
 
 const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -31,12 +31,12 @@ const town=[
 ];
 
 // Water flows through the revealed stretches of the river only, so fog never leaks it.
-function riverPaths(land,radius){
+function riverPaths(land,seen){
   const river=land.river;
   if(river.length<2)return '';
   const [ax,ay]=at(river[0]),[bx,by]=at(river[1]),dx=(bx-ax)/2,dy=(by-ay)/2;
   const runs=[];let run=[];
-  for(const i of river){if(hexes[i].dist<=radius)run.push(i);else if(run.length){runs.push(run);run=[]}}
+  for(const i of river){if(seen(i))run.push(i);else if(run.length){runs.push(run);run=[]}}
   if(run.length)runs.push(run);
   return runs.map(tiles=>{
     const pts=tiles.map(at);
@@ -54,18 +54,50 @@ function riverPaths(land,radius){
 
 const occupantOf=(state,i)=>Object.keys(state.tiles||{}).find(id=>state.tiles[id]===i);
 
+// Story decisions drawn onto the land: the hard season before the first decision, then the
+// stores or the mapped route, then the neighbouring camp beyond the edge and whatever the
+// team chose to build between them.
+const axial=(q,r)=>[+(W*(q+r/2)).toFixed(1),+(1.5*S*r).toFixed(1)];
+const hazardIcons={
+  flood:'M16 4c-3 6-8 10-8 15a8 8 0 0 0 16 0c0-5-5-9-8-15z',
+  drought:'M16 10a6 6 0 1 0 0 12 6 6 0 0 0 0-12M16 3v4m0 18v4M3 16h4m18 0h4M7 7l3 3m12 12 3 3M7 25l3-3M22 10l3-3',
+  storm:'M9 19h14a5 5 0 0 0-1.5-9.8A7 7 0 0 0 8 11a4 4 0 0 0 1 8zM17 19l-3 5h5l-3 5',
+  frost:'M16 3v26M5 9.5l22 13M5 22.5l22-13M12 5l4 4 4-4M12 27l4-4 4 4'
+};
+const hazardLand={flood:['river','wetland','plains','grass'],drought:['grass','plains','desert'],storm:['coast','hills','forest'],frost:['ice','hills','grass']};
+const line=points=>'M'+points.map(p=>p.join(' ')).join(' L');
+function eventLayer(state,land,L){
+  const origin=state.events?.origin,encounter=state.events?.encounter,parts=[],path=route(state.mapPoint);
+  if(!origin){
+    const kind=hazardOf(state.mapPoint),prefer=hazardLand[kind]||[];
+    const ring=hexes.map((_,i)=>i).filter(i=>hexes[i].dist===1).sort((a,b)=>(prefer.includes(land.tiles[b])-prefer.includes(land.tiles[a]))||a-b).slice(0,3);
+    for(const i of ring)parts.push(`<g class="ev-hazard hz-${kind}" transform="${move(i)}"><polygon class="hz-tint" points="${INNER}"/><path class="hz-icon" transform="translate(-9 -9) scale(.56)" d="${hazardIcons[kind]}"/></g>`);
+  }
+  if(origin==='steward')parts.push(`<circle class="ev-stores" r="30" transform="${move(center)}"/>`);
+  if(origin==='explore'&&path)parts.push(`<path class="ev-route" d="${line([at(center),...path.tiles.map(at)])}"/>`);
+  if(origin&&(state.stage>=3||encounter)){
+    const [dq,dr]=DIRECTIONS[neighbourDirection(state)],camp=axial(dq*3.9,dr*3.9),road=line([at(center),camp]);
+    if(encounter==='exchange'||encounter==='guard')parts.push(`<path class="ev-road" d="${road}"/>`);
+    if(encounter==='share')parts.push(`<path class="ev-carts" d="${road}"/>`);
+    if(encounter==='guard'){const [x,y]=axial(dq*2,dr*2);parts.push(`<g class="ev-tower" transform="translate(${x+15} ${y-14})"><path d="M-3 8v-13h6v13zM-5.5-5h11l-2-4h-7z"/></g>`)}
+    if(encounter==='reserve')parts.push(`<circle class="ev-wall" r="27" transform="${move(center)}"/>`);
+    parts.push(`<g class="ev-camp ${encounter?'met':'waiting'}" transform="translate(${camp[0]} ${camp[1]})"><title>${safe(L.gbNeighbours)}</title><circle class="ev-camp-ring" r="17"/><path class="ev-tents" d="M-11 7l6-11 6 11zM1 7l5-9 5 9z"/><path class="ev-flag" d="M-2-6v-10l7 3-7 3"/></g>`);
+  }
+  return `<g class="hx-events" aria-hidden="true">${parts.join('')}</g>`;
+}
+
 // mode 'play' is the interactive banner map; 'mini' is the read-only copy in the chronicle
 // and the teacher's review panel.
 export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false}={}){
   const land=generateLand(state.mapPoint);
   if(!land)return '';
-  const radius=revealRadius(state),play=mode==='play',tiles=state.tiles||{};
+  const seen=i=>isRevealed(state,i),play=mode==='play',tiles=state.tiles||{};
   const terrainName=i=>terrains[land.tiles[i]][lang];
-  const cells=hexes.map((hex,i)=>hex.dist>radius
+  const cells=hexes.map((hex,i)=>!seen(i)
     ?`<g class="hx hx-fog" data-hex="${i}" transform="${move(i)}"><polygon class="hx-base" points="${HEX}"/>${fogGlyph}</g>`
     :`<g class="hx hx-${land.tiles[i]}" data-hex="${i}" transform="${move(i)}"><polygon class="hx-base" points="${HEX}"/><polygon class="hx-bevel" points="${INNER}"/>${i===center?'':`<g class="hx-glyph"${i%2?' transform="scale(-1 1)"':''}>${glyphs[land.tiles[i]]}</g>`}</g>`).join('');
   const hits=play?hexes.map((hex,i)=>{
-    if(hex.dist>radius||i===center)return '';
+    if(!seen(i)||i===center)return '';
     const other=occupantOf(state,i);
     const target=selected&&(!other||other===selected)&&fits(land,selected,i);
     const cls=selected?(target?'fit':'blocked'):'';
@@ -79,8 +111,9 @@ export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false}
   const size=settlementSize(state);
   const settlement=`<g class="hx-settlement size-${size}" transform="${move(center)}"><title>${safe(L.settlementStages[size])}</title>${town[size]}</g>`;
   const clouds=play?'<g class="hx-clouds" aria-hidden="true"><ellipse class="hx-cloud c1" cx="-120" cy="-90" rx="60" ry="18"/><ellipse class="hx-cloud c2" cx="40" cy="110" rx="75" ry="20"/></g>':'';
-  const box=`${-(3.5*W+4).toFixed(0)} ${-(4.5*S+S+4)} ${(7*W+8).toFixed(0)} ${9*S+2*S+8}`;
-  return `<svg class="hexmap ${mode} ${selected?'moving':''}" viewBox="${box}" role="group" aria-label="${safe(`${L.landTitle} · ${L.settlementStages[size]}`)}"><defs><filter id="hx-soft-${mode}"><feGaussianBlur stdDeviation="9"/></filter><clipPath id="hx-clip-${mode}">${hexes.map((_,i)=>`<polygon points="${HEX}" transform="${move(i)}"/>`).join('')}</clipPath><radialGradient id="hx-light-${mode}" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="#fff6dc" stop-opacity=".2"/><stop offset=".55" stop-color="#fff6dc" stop-opacity="0"/><stop offset="1" stop-color="#050b0e" stop-opacity=".4"/></radialGradient></defs><g class="hx-cells">${cells}</g><g class="hx-water">${riverPaths(land,radius)}</g><rect class="hx-light" x="-200" y="-175" width="400" height="350" fill="url(#hx-light-${mode})" clip-path="url(#hx-clip-${mode})"/><g class="hx-hits">${hits}</g>${settlement}<g class="hx-buildings">${buildings}</g>${clouds.replace(/class="hx-cloud/g,`filter="url(#hx-soft-${mode})" class="hx-cloud`)}</svg>`;
+  // Room beyond the edge for the neighbouring camp.
+  const box='-218 -192 436 384';
+  return `<svg class="hexmap ${mode} ${selected?'moving':''}" viewBox="${box}" role="group" aria-label="${safe(`${L.landTitle} · ${L.settlementStages[size]}`)}"><defs><filter id="hx-soft-${mode}"><feGaussianBlur stdDeviation="9"/></filter><clipPath id="hx-clip-${mode}">${hexes.map((_,i)=>`<polygon points="${HEX}" transform="${move(i)}"/>`).join('')}</clipPath><radialGradient id="hx-light-${mode}" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="#fff6dc" stop-opacity=".2"/><stop offset=".55" stop-color="#fff6dc" stop-opacity="0"/><stop offset="1" stop-color="#050b0e" stop-opacity=".4"/></radialGradient></defs><g class="hx-cells">${cells}</g><g class="hx-water">${riverPaths(land,seen)}</g><rect class="hx-light" x="-220" y="-195" width="440" height="390" fill="url(#hx-light-${mode})" clip-path="url(#hx-clip-${mode})"/><g class="hx-hits">${hits}</g>${eventLayer(state,land,L)}${settlement}<g class="hx-buildings">${buildings}</g>${clouds.replace(/class="hx-cloud/g,`filter="url(#hx-soft-${mode})" class="hx-cloud`)}</svg>`;
 }
 
 // What the side panel says about a hex: its land, what stands there, and which of the
@@ -88,7 +121,7 @@ export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false}
 export function tileInfo(state,lang,L,i){
   const land=generateLand(state.mapPoint);
   if(!land||i==null||!hexes[i])return `<p>${L.landHelp}</p>`;
-  if(hexes[i].dist>revealRadius(state))return `<strong>${L.fogged}</strong><p>${L.revealHint}</p>`;
+  if(!isRevealed(state,i))return `<strong>${L.fogged}</strong><p>${L.revealHint}</p>`;
   if(i===center)return `<strong>${L.settlementStages[settlementSize(state)]}</strong><p>${L.settlementNote}</p>`;
   const other=occupantOf(state,i),chosen=[...state.tech,...state.civic];
   const suits=chosen.filter(id=>fits(land,id,i)).map(id=>improvements[id].name[lang]);

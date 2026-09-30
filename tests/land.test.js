@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyAction, initialState, trees } from '../shared/game.js';
-import { generateLand, hexes, center, improvements, terrains, revealRadius, fits, settleTiles } from '../shared/land.js';
+import { generateLand, hexes, center, improvements, terrains, revealRadius, fits, settleTiles, route, hazardOf, isRevealed, fitTiles } from '../shared/land.js';
 
 const start=point=>[
   {type:'map',point},
@@ -88,6 +88,31 @@ test('exploring outward and travel technology reveal the far edge',()=>{
   assert.equal(revealRadius(steward),3,'sailing reaches the far coast');
   assert(Number.isInteger(steward.tiles.sailing),'the harbor finds the sea');
   assert.equal(generateLand('B').tiles[steward.tiles.sailing],'coast');
+});
+
+test('each place has a hard season and a land route to its edge',()=>{
+  for(const point of 'ABCDEFGHIJK'){
+    assert(['flood','drought','storm','frost'].includes(hazardOf(point)),`${point} has a hazard`);
+    const path=route(point);
+    assert.deepEqual(path.tiles.map(i=>hexes[i].dist),[1,2,3]);
+    assert(path.tiles.every(i=>generateLand(point).tiles[i]!=='coast'),`${point} route stays on land`);
+  }
+});
+
+test('mapping paths outward clears the fog along the route, and the land can be built there',()=>{
+  const home=start('F');
+  const far=route('F').tiles[2];
+  let explore=applyAction(home,{type:'event',id:'origin',choice:'explore'});
+  let steward=applyAction(home,{type:'event',id:'origin',choice:'steward'});
+  assert(isRevealed(explore,far),'the route reaches the edge');
+  assert(!isRevealed(steward,far),'staying home keeps the edge hidden');
+  explore=pick(explore,'tech','pottery');
+  explore=pick(explore,'tech','writing');
+  explore=pick(explore,'civic','laws');
+  explore=pick(explore,'civic','trade');
+  assert(fitTiles(explore,'trade').includes(explore.tiles.trade),'the trading post stands on a fitting hex');
+  assert(fitTiles(explore,'trade').every(i=>isRevealed(explore,i)),'only explored land is offered');
+  assert.deepEqual(fitTiles(steward,'nothing'),[]);
 });
 
 test('a team saved before the map existed gets a layout without losing work',()=>{

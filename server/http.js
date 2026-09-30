@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mapPoints, normalizeCode, isCodeShape, textFields } from '../shared/game.js';
-import { createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, sameHash, submitTeam, teamActivity, updateTeam } from './store.js';
+import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, sameHash, submitTeam, teamActivity, updateTeam } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceFiles = {
@@ -15,6 +15,7 @@ const sourceFiles = {
   '/rpg.js':['public/rpg.js','text/javascript; charset=utf-8'],
   '/student-view.js':['public/student-view.js','text/javascript; charset=utf-8'],
   '/hexmap.js':['public/hexmap.js','text/javascript; charset=utf-8'],
+  '/prompts.js':['public/prompts.js','text/javascript; charset=utf-8'],
   '/app.css':['public/app.css','text/css; charset=utf-8'],
   '/rpg.css':['public/rpg.css','text/css; charset=utf-8'],
   '/shared/game.js':['shared/game.js','text/javascript; charset=utf-8'],
@@ -211,7 +212,7 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         const body=await readJson(req);const name=String(body.name||'').trim();
         if (name.length<2 || name.length>60) {send(res,400,{error:'Enter your name (2–60 characters)'});return;}
         const normalized=normalizeCode(body.code);
-        if (!isCodeShape(normalized)) {send(res,400,{error:'A team code is 9 letters and numbers.'});return;}
+        if (!isCodeShape(normalized)) {send(res,400,{error:'Enter your team code, like A-427.'});return;}
         const team=findTeamByCode(normalized);
         if (!team) {send(res,401,{error:'Team code not found'});return;}
         const {token}=createSession('student',team.id,name);
@@ -257,6 +258,14 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (pathname==='/api/teacher/teams' && req.method==='POST') {
         auth(req,'teacher');const body=await readJson(req);
         const team=createTeam(body.name);send(res,201,{team});broadcast(team.id);return;
+      }
+      if (pathname==='/api/teacher/letter-teams' && req.method==='POST') {
+        auth(req,'teacher');await readJson(req);
+        const made=addLetterTeams();const teams=listTeams();
+        send(res,200,{made:made.length,teams});
+        const payload=JSON.stringify({teams});
+        for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
+        return;
       }
       const detail=pathname.match(/^\/api\/teacher\/teams\/(\d+)$/);
       if (detail && req.method==='GET') {

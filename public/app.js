@@ -1,8 +1,9 @@
-import { trees, textFields, normalizeCode, isCodeShape, codeLength, questStatus, applyAction } from '/shared/game.js';
+import { trees, textFields, normalizeCode, isCodeShape, questStatus, applyAction, mapPoints } from '/shared/game.js';
 import { dictionary } from '/shared/i18n.js';
-import { hexes, revealRadius } from '/shared/land.js';
-import { renderStudentView, renderSummaryRows, renderSubmissionBox, renderQuestLog, chaptersMarkup, contentMarkup, sidebarMarkup, bannerMarkup, landStageMarkup, landInfoMarkup, landBuildingsMarkup, showsLand, cardStatus } from '/student-view.js';
-import { landMarkup } from '/hexmap.js';
+import { hexes, isRevealed, improvements, terrains, generateLand } from '/shared/land.js';
+import { renderStudentView, renderSummaryRows, renderSubmissionBox, renderQuestLog, eraTrackMarkup, councilMarkup, toolbarMarkup, stageMarkup, overlayMarkup, footMarkup, sideMarkup, drawerMarkup, cardStatus, pendingEvent } from '/student-view.js';
+import { landMarkup, tileInfo } from '/hexmap.js';
+import { councilPrompt, fill } from '/prompts.js';
 
 const app=document.querySelector('#app');
 const noticeBox=document.querySelector('#notice');
@@ -15,9 +16,10 @@ let saveTimers=new Map();
 // serverTeam is the last state the server confirmed. team is what the page shows: that
 // state with this student's unconfirmed actions applied on top, so a click answers at once.
 let serverTeam=null,pending=[],actionQueue=Promise.resolve();
-// Page-only state for the homeland map: which view the banner shows, the building being
-// moved, and the hex being read.
-const ui={banner:'land',selected:null,hover:null};
+// Page-only state for the board: the building being moved, the hex being read, the card
+// shown over the map (arrival scene, atlas or an event), whether an event card is showing
+// its result, the open tree drawer, and which one-time cards this student has already seen.
+const ui={selected:null,hover:null,overlay:null,result:null,drawer:null,seen:new Set()};
 let shownKey='';
 // A revealed join code exists nowhere else: the server keeps only its hash. Losing it to a
 // page refresh would force a new code and cut off students who already have the old one.
@@ -35,7 +37,9 @@ const submitted=()=>!!team?.submittedAt;
 function toast(message,type='info'){notice=message;noticeType=type;renderNotice();setTimeout(()=>{if(notice===message){notice='';renderNotice()}},4400)}
 function renderNotice(){noticeBox.innerHTML=notice?`<div class="toast ${noticeType}">${esc(notice)}</div>`:''}
 async function api(path,body,method){const res=await fetch(path,{method:method||(body===undefined?'GET':'POST'),headers:body===undefined&&!method?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});const data=await res.json();if(!res.ok)throw Object.assign(new Error(data.error||L().error),{gaps:data.gaps});return data}
-async function boot(){try{const data=await api('/api/me');adopt(data);render();if(data.authenticated)openStream()}catch(error){app.innerHTML=`<div class="fatal">${esc(error.message)}</div>`}}
+// A team that starts with its homeland (A–K) meets it on the first screen of era I.
+function firstArrival(){if(session?.role==='student'&&team?.state.stage===1&&team.state.mapPoint)autoOverlays(null)}
+async function boot(){try{const data=await api('/api/me');adopt(data);firstArrival();render();if(data.authenticated)openStream()}catch(error){app.innerHTML=`<div class="fatal">${esc(error.message)}</div>`}}
 function adopt(data){session=data.authenticated?{role:data.role,name:data.name}:null;if(data.team){serverTeam=null;pending=[];adoptTeam(data.team)}if(data.roster)roster=data.roster;if(data.teams)teams=data.teams;if(data.presence)presenceFields=data.presence}
 function projected(){
   let state=serverTeam.state;
@@ -95,7 +99,12 @@ async function onTeamEvent(event){
       if(el&&(document.activeElement===el||saveTimers.has(key))&&el.value!==incoming.state[key])held.push(key);
     }
   }
-  if(structural){render({prev:previous?.state,stageChange:stageChanged});patchFields([])}
+  if(structural){
+    if(ui.overlay?.startsWith('event:')){const id=ui.overlay.slice(6);if(previous?.state.events?.[id]!==incoming.state.events?.[id]&&incoming.state.events?.[id])ui.result=id}
+    if(stageChanged)ui.drawer=null;
+    autoOverlays(previous?.state);
+    render({prev:previous?.state,stageChange:stageChanged});patchFields([])
+  }
   else{patchFields(held);updateLiveBits();updateSummary()}
   if(held.length&&data.by&&data.by!==session?.name)toast(fmt(L().changedField,data.by),'warn');
 }
@@ -127,7 +136,7 @@ function captureFocus(){
   const el=document.activeElement;
   if(!el||el===document.body)return null;
   const data=el.dataset||{};
-  const key=data.field?['data-field',data.field]:data.pick?['data-pick',data.pick]:data.map?['data-map',data.map]:data.avatar?['data-avatar',data.avatar]:data.event?['data-event',data.event]:data.building?['data-building',data.building]:data.tile?['data-tile',data.tile]:data.stage?['data-stage',data.stage]:data.action?['data-action',data.action]:data.mode?['data-mode',data.mode]:null;
+  const key=data.field?['data-field',data.field]:data.pick?['data-pick',data.pick]:data.map?['data-map',data.map]:data.avatar?['data-avatar',data.avatar]:data.event?['data-event',data.event]:data.goal?['data-goal',data.goal]:data.building?['data-building',data.building]:data.tile?['data-tile',data.tile]:data.stage?['data-stage',data.stage]:data.action?['data-action',data.action]:data.mode?['data-mode',data.mode]:null;
   if(!key)return null;
   return {key,selection:typeof el.selectionStart==='number'?[el.selectionStart,el.selectionEnd]:null};
 }
@@ -146,28 +155,39 @@ function collectDrafts(){
   return drafts;
 }
 function restoreDrafts(drafts){for(const [key,value] of drafts){const el=document.querySelector(`[data-field="${key}"]`);if(el&&el.value!==value)el.value=value}}
-// Replace only the top-level blocks that changed. Answer boxes are never replaced (their
-// text is patched by patchFields) and open <details> stay open.
+// Bring a region up to date by replacing only what changed. An answer box and its textarea
+// are never replaced (patchFields owns their text), but the question around them is
+// updated in place, and open <details> stay open.
+const holdsField=node=>node.nodeType===1&&(node.matches('[data-field]')||!!node.querySelector('[data-field]'));
+function morphNode(was,node){
+  if(was.isEqualNode(node))return;
+  if(was.nodeType===1&&node.nodeType===1&&was.tagName===node.tagName&&holdsField(was)&&holdsField(node)){
+    if(was.matches('[data-field]')){if(was.dataset.field===node.dataset.field){was.disabled=node.disabled;return}}
+    else{
+      for(const a of [...was.attributes])if(!node.hasAttribute(a.name))was.removeAttribute(a.name);
+      for(const a of [...node.attributes])if(was.getAttribute(a.name)!==a.value)was.setAttribute(a.name,a.value);
+      morphChildren(was,[...node.childNodes]);return;
+    }
+  }
+  was.replaceWith(node);
+}
+function morphChildren(container,fresh){
+  const old=[...container.childNodes];
+  if(fresh.length!==old.length){container.replaceChildren(...fresh);return}
+  fresh.forEach((node,i)=>morphNode(old[i],node));
+}
 function morph(container,html){
   if(!container)return;
   const next=document.createElement('template');next.innerHTML=html;
   const oldDetails=container.querySelectorAll('details'),newDetails=next.content.querySelectorAll('details');
   if(oldDetails.length===newDetails.length)newDetails.forEach((d,i)=>{d.open=oldDetails[i].open});
-  const fresh=[...next.content.childNodes],old=[...container.childNodes];
-  if(fresh.length!==old.length){container.replaceChildren(...fresh);return}
-  fresh.forEach((node,i)=>{
-    const was=old[i];
-    if(was.isEqualNode(node))return;
-    const field=node.querySelector?.('[data-field]'),kept=was.querySelector?.('[data-field]');
-    if(field&&kept&&field.dataset.field===kept.dataset.field&&was.className===node.className){kept.disabled=field.disabled;return}
-    was.replaceWith(node);
-  });
+  morphChildren(container,[...next.content.childNodes]);
 }
-const viewKey=()=>session?.role==='student'&&team?[team.state.stage,team.state.mapPoint,lang,showsLand(team.state,ui),!!team.submittedAt,team.name].join('|'):'';
+const viewKey=()=>session?.role==='student'&&team?[team.state.stage,team.state.mapPoint,lang,!!team.submittedAt,team.name].join('|'):'';
 const canViewTransition=()=>typeof document.startViewTransition==='function'&&!reducedMotion.matches;
 function render(options={}){
   if(ui.selected&&!Number.isInteger(team?.state.tiles?.[ui.selected]))ui.selected=null;
-  if(shownKey&&shownKey===viewKey()&&!options.full&&document.querySelector('#campaign-content')){patchStudent();celebrate(options.prev);return}
+  if(shownKey&&shownKey===viewKey()&&!options.full&&document.querySelector('#council')){patchStudent();celebrate(options.prev);return}
   const swap=()=>{
     const focus=captureFocus(),drafts=collectDrafts();
     document.documentElement.lang=lang;
@@ -176,6 +196,7 @@ function render(options={}){
     app.innerHTML=!session?authPage():session.role==='teacher'?teacherPage():renderStudentView({team,roster,lang,L:L(),topbar:topbar(),sync,playing:scenePlaying,animate:options.stageChange&&!canViewTransition(),ui});
     shownKey=viewKey();
     restoreDrafts(drafts);updatePresence();restoreFocus(focus);
+    document.body.classList.toggle('drawer-open',!!ui.drawer&&session?.role==='student');
     if(options.stageChange){const main=document.querySelector('#main');if(main&&main.getBoundingClientRect().top<0)main.scrollIntoView({block:'start'})}
     celebrate(options.prev);
   };
@@ -184,25 +205,32 @@ function render(options={}){
 }
 function patchStudent(){
   const focus=captureFocus(),drafts=collectDrafts(),dict=L();
-  morph(document.querySelector('#chapters'),chaptersMarkup(team,dict));
-  morph(document.querySelector('#campaign-content'),contentMarkup(team,lang,dict));
-  morph(document.querySelector('#campaign-sidebar'),sidebarMarkup(team,lang,dict));
-  patchLand();
+  morph(document.querySelector('#era-track'),eraTrackMarkup(team,dict));
+  morph(document.querySelector('#council'),councilMarkup(team,lang,dict));
+  morph(document.querySelector('#board-toolbar'),toolbarMarkup(team,lang,dict));
+  morph(document.querySelector('#board-side'),sideMarkup(team,lang,dict));
+  patchBoard();patchOverlay();patchDrawer();
   restoreDrafts(drafts);updatePresence();restoreFocus(focus);
 }
-function patchLand(){
-  if(!document.querySelector('#land-stage'))return;
+function patchBoard(){
   const dict=L();
-  morph(document.querySelector('#land-stage'),landStageMarkup(team,lang,dict,ui));
-  morph(document.querySelector('#land-info'),landInfoMarkup(team,lang,dict,ui));
-  morph(document.querySelector('#land-buildings'),landBuildingsMarkup(team,lang,dict,ui));
+  morph(document.querySelector('#board-stage'),stageMarkup(team,lang,dict,ui));
+  morph(document.querySelector('#board-foot'),footMarkup(team,lang,dict,ui));
 }
-function patchBanner(){
-  const banner=document.querySelector('#world-banner');
-  if(!banner)return;
-  banner.innerHTML=bannerMarkup(team,lang,L(),{playing:scenePlaying,ui});
-  banner.classList.toggle('land',showsLand(team.state,ui));
-  shownKey=viewKey();
+function patchOverlay(){morph(document.querySelector('#board-overlay'),overlayMarkup(team,lang,L(),ui,scenePlaying))}
+function patchDrawer(){
+  morph(document.querySelector('#drawer'),drawerMarkup(team,lang,L(),ui));
+  document.body.classList.toggle('drawer-open',!!ui.drawer);
+}
+function openOverlay(name){ui.overlay=name;ui.result=null;ui.selected=null;patchOverlay();patchBoard();document.querySelector('#board-overlay [data-event]:not(:disabled),#board-overlay button')?.focus({preventScroll:true})}
+function closeOverlay(){ui.overlay=null;ui.result=null;patchOverlay()}
+function openDrawer(kind){ui.drawer=kind;patchDrawer();document.querySelector('.drawer-tabs [aria-selected="true"]')?.focus({preventScroll:true})}
+// Cards that open by themselves, once per student: arriving somewhere new, and meeting the
+// neighbours when the team reaches the society era with the meeting still undecided.
+function autoOverlays(prev){
+  const next=team.state;
+  if(next.mapPoint&&prev?.mapPoint!==next.mapPoint&&!ui.seen.has('arrival:'+next.mapPoint)){ui.seen.add('arrival:'+next.mapPoint);ui.overlay='arrival';ui.result=null;return}
+  if(next.stage===3&&pendingEvent(next)==='encounter'&&!ui.seen.has('encounter')){ui.seen.add('encounter');ui.overlay='event:encounter';ui.result=null}
 }
 // Newly chosen cards flip in, cards that just became reachable pulse, a moved building
 // drops onto its hex and freshly explored land clears its fog.
@@ -216,8 +244,16 @@ function celebrate(prev){
   }
   if(prev.mapPoint!==next.mapPoint)return;
   for(const [id,tile] of Object.entries(next.tiles||{}))if(prev.tiles?.[id]!==tile)mark(`[data-building-at="${id}"]`,'just-placed');
-  const was=revealRadius(prev),now=revealRadius(next);
-  if(now>was)for(const el of document.querySelectorAll('[data-hex]')){const d=hexes[Number(el.dataset.hex)].dist;if(d>was&&d<=now)el.classList.add('just-revealed')}
+  for(const el of document.querySelectorAll('[data-hex]')){const i=Number(el.dataset.hex);if(isRevealed(next,i)&&!isRevealed(prev,i))el.classList.add('just-revealed')}
+  // A new building is announced in the open drawer, where the student cannot see the map.
+  const land=generateLand(next.mapPoint),raised=Object.keys(next.tiles||{}).find(id=>!(id in (prev.tiles||{})));
+  const note=document.querySelector('#drawer-note');
+  if(note&&land&&raised){note.textContent=fill(L().gbRaised,{building:improvements[raised].name[lang],terrain:lang==='en'?terrains[land.tiles[next.tiles[raised]]].en.toLowerCase():terrains[land.tiles[next.tiles[raised]]].ja});note.classList.remove('flash');void note.offsetWidth;note.classList.add('flash')}
+  // A council question rewritten by this change glows, so students notice it now fits them.
+  for(const el of document.querySelectorAll('[data-answer]')){
+    const key=el.dataset.answer;
+    if(councilPrompt(key,prev,lang,L()).q!==councilPrompt(key,next,lang,L()).q){el.classList.remove('q-new');void el.offsetWidth;el.classList.add('q-new')}
+  }
 }
 const preloaded=new Set();
 function preload(point){
@@ -226,7 +262,7 @@ function preload(point){
     preloaded.add(src);const img=new Image();img.decoding='async';img.src=src;
   }
 }
-function authPage(){return `<div class="auth-page"><header class="simple-header"><div class="logo"><span>✦</span> BUILD YOUR CIV</div><button class="lang" data-action="language">${L().language}</button></header><section class="auth-hero"><div class="auth-copy"><div class="eyebrow">GAME · ゲーム</div><h1>${L().welcome}</h1><p class="tagline">${L().tagline}</p><p>${L().intro}</p><div class="hero-tags"><span>01 — 04</span><span>TEAM PLAY</span><span>LIVE</span></div></div><div class="auth-card"><div class="auth-tabs"><button class="${authMode==='student'?'active':''}" data-mode="student">${L().join}</button><button class="${authMode==='teacher'?'active':''}" data-mode="teacher">${L().teacher}</button></div><form id="auth-form">${authMode==='student'?`<label>${L().name}<input name="name" autocomplete="off" required maxlength="60" placeholder="${L().name}" /></label><label>${L().code}<input name="code" autocomplete="off" required maxlength="24" placeholder="ABC DEF GHI" class="code-input" /></label>`:`<label>${L().password}<input name="password" type="password" autocomplete="off" required placeholder="••••••••••••" /></label>`}<p class="typing-note">✎ ${L().typing}</p><button class="btn-primary full" type="submit">${authMode==='student'?L().enter:L().teacherEnter} <span>→</span></button></form></div></section><div class="auth-bottom"><div><b>01</b> ${L().steps[0]}</div><div><b>02</b> ${L().steps[1]}</div><div><b>03</b> ${L().steps[2]}</div><div><b>04</b> ${L().steps[3]}</div></div></div>`}
+function authPage(){return `<div class="auth-page"><header class="simple-header"><div class="logo"><span>✦</span> BUILD YOUR CIV</div><button class="lang" data-action="language">${L().language}</button></header><section class="auth-hero"><div class="auth-copy"><div class="eyebrow">GAME · ゲーム</div><h1>${L().welcome}</h1><p class="tagline">${L().tagline}</p><p>${L().intro}</p><div class="hero-tags"><span>01 — 04</span><span>TEAM PLAY</span><span>LIVE</span></div></div><div class="auth-card"><div class="auth-tabs"><button class="${authMode==='student'?'active':''}" data-mode="student">${L().join}</button><button class="${authMode==='teacher'?'active':''}" data-mode="teacher">${L().teacher}</button></div><form id="auth-form">${authMode==='student'?`<label>${L().name}<input name="name" autocomplete="off" required maxlength="60" placeholder="${L().name}" /></label><label>${L().code}<input name="code" autocomplete="off" required maxlength="24" placeholder="A-427" class="code-input" /></label>`:`<label>${L().password}<input name="password" type="password" autocomplete="off" required placeholder="••••••••••••" /></label>`}<p class="typing-note">✎ ${L().typing}</p><button class="btn-primary full" type="submit">${authMode==='student'?L().enter:L().teacherEnter} <span>→</span></button></form></div></section><div class="auth-bottom"><div><b>01</b> ${L().steps[0]}</div><div><b>02</b> ${L().steps[1]}</div><div><b>03</b> ${L().steps[2]}</div><div><b>04</b> ${L().steps[3]}</div></div></div>`}
 function topbar(teacher=false){return `<header class="topbar"><div class="logo"><span>✦</span> BUILD YOUR CIV</div><div class="top-actions">${teacher?'':`<div class="team-chip"><small>${L().team}</small><strong>${esc(team?.name)}</strong></div><div class="live"><i></i><span id="sync" aria-live="polite">${sync==='offline'?L().reconnecting:sync==='saving'?L().saving:L().save}</span></div>`}<button class="lang" data-action="language">${L().language}</button><button class="text-button light" data-action="logout">${L().signout}</button></div></header>`}
 // One definition of the presentation rows, used by the student preview, the teacher
 // review panel and the printout.
@@ -236,10 +272,12 @@ function summaryRowsFor(state){
 function submissionBoxBody(){
   return renderSubmissionBox(team,L());
 }
-function teacherPage(){return `<div class="app-shell">${topbar(true)}<main id="main" class="teacher-main"><div class="teacher-intro"><div class="eyebrow">TEACHER STUDIO</div><h1>${L().teacherTitle}</h1><p>${L().teacherDesc}</p></div><div class="teacher-layout"><section class="teacher-left"><div class="panel create-panel"><div class="panel-heading"><h2>${L().createTeam}</h2></div><form id="create-team"><label class="answer-field"><span>${L().teamName}</span><input name="teamName" required maxlength="80" autocomplete="off" /></label><button class="btn-primary" type="submit">${L().create} →</button></form></div><div class="teacher-list" id="teacher-list">${teacherList()}</div></section><aside class="teacher-right" id="teacher-right">${teacherDetail?teacherDetailView():teacherWelcome()}</aside></div></main></div>`}
+function teacherPage(){return `<div class="app-shell">${topbar(true)}<main id="main" class="teacher-main"><div class="teacher-intro"><div class="eyebrow">TEACHER STUDIO</div><h1>${L().teacherTitle}</h1><p>${L().teacherDesc}</p></div><div class="teacher-layout"><section class="teacher-left"><div class="panel create-panel"><div class="panel-heading"><h2>${L().createTeam}</h2></div><form id="create-team"><label class="answer-field"><span>${L().teamName}</span><input name="teamName" required maxlength="80" autocomplete="off" /></label><button class="btn-primary" type="submit">${L().create} →</button></form>${missingLetters()?`<button class="btn-outline letter-teams" data-action="letter-teams">${L().addLetterTeams} (${missingLetters()})</button>`:''}</div><div class="teacher-list" id="teacher-list">${teacherList()}</div></section><aside class="teacher-right" id="teacher-right">${teacherDetail?teacherDetailView():teacherWelcome()}</aside></div></main></div>`}
+// Map points no team is fixed to, so the teacher can bring back a deleted A–K team.
+const missingLetters=()=>Object.keys(mapPoints).filter(point=>!teams.some(x=>x.state.fixedPoint===point)).join(' ');
 function teacherList(){return teams.length?teams.map(x=>teacherTeamCard(x)).join(''):`<div class="panel empty-teams">${L().noTeams}</div>`}
 function teacherWelcome(){return `<div class="teacher-welcome"><img src="/assets/meeting.webp" alt="Two communities meeting" /><div>✦ ${L().studentWork}</div></div>`}
-function teacherTeamCard(x){const code=newCodes.get(x.id),quests=questStatus(x.state,!!x.submittedAt).filter(Boolean).length;return `<div class="panel team-card"><div class="team-card-top"><div><h3>${esc(x.name)}</h3><span>${L().questLog} ${quests}/4 · ${x.state.tech.length}+${x.state.civic.length} ${L().chosen}</span></div><span class="status ${x.submittedAt?'submitted':''}">${x.submittedAt?L().submitted:L().working}</span></div>${code?`<div class="code-reveal"><small>${L().codeOnce}</small><strong>${esc(code)}</strong></div>`:''}<div class="team-card-actions">${button(L().review,`review:${x.id}`,'btn-outline')}${button(L().newCode,`code:${x.id}`,'btn-ghost')}${button(L().deleteTeam,`delete:${x.id}`,'btn-ghost danger')}</div></div>`}
+function teacherTeamCard(x){const code=x.code||newCodes.get(x.id),quests=questStatus(x.state,!!x.submittedAt).filter(Boolean).length,point=x.state.fixedPoint;return `<div class="panel team-card"><div class="team-card-top">${point?`<span class="team-letter" title="${esc(L().homelandFixed)} ${point}">${point}</span>`:''}<div><h3>${esc(x.name)}</h3><span>${L().questLog} ${quests}/4 · ${x.state.tech.length}+${x.state.civic.length} ${L().chosen}</span></div><span class="status ${x.submittedAt?'submitted':''}">${x.submittedAt?L().submitted:L().working}</span></div>${code?`<div class="code-reveal"><small>${x.code?`${L().joinCode} · ${L().codeHint}`:L().codeOnce}</small><strong>${esc(code)}</strong></div>`:''}<div class="team-card-actions">${button(L().review,`review:${x.id}`,'btn-outline')}${button(L().newCode,`code:${x.id}`,'btn-ghost')}${button(L().deleteTeam,`delete:${x.id}`,'btn-ghost danger')}</div></div>`}
 function activityView(){
   const activity=teacherDetail.activity;
   if(!activity)return '';
@@ -256,6 +294,8 @@ function teacherDetailView(){
 function patchTeacher(){
   const focus=captureFocus();
   const list=document.querySelector('#teacher-list');if(list)list.innerHTML=teacherList();
+  const extra=document.querySelector('.create-panel .letter-teams'),missing=missingLetters();
+  if(extra&&!missing)extra.remove();else if(extra)extra.textContent=`${L().addLetterTeams} (${missing})`;
   const right=document.querySelector('#teacher-right');if(right)right.innerHTML=teacherDetail?teacherDetailView():teacherWelcome();
   restoreFocus(focus);
 }
@@ -270,7 +310,7 @@ async function authSubmit(event){
       body={name:form.get('name'),code};
     } else body={password:form.get('password')};
     const data=await api(authMode==='student'?'/api/auth/team':'/api/auth/teacher',body);
-    adopt(data);render();openStream();
+    adopt(data);firstArrival();render();openStream();
   }catch(error){toast(error.message,'error')}
 }
 async function createTeamSubmit(event){
@@ -301,6 +341,10 @@ function action(payload){
   if(payload.type==='map')preload(payload.point);
   pending.push(payload);
   team={...team,state:next};
+  if(payload.type==='event'){ui.overlay='event:'+payload.id;ui.result=payload.id}
+  else if(payload.type==='map'&&ui.overlay==='atlas')ui.overlay=null;
+  if(payload.type==='stage')ui.drawer=null;
+  autoOverlays(before);
   render({prev:before,stageChange:before.stage!==next.stage});
   if(questStatus(next,submitted()).some((done,i)=>done&&!quests[i]))toast(`✦ ${L().completeQuest}`,'quest');
   sync='saving';updateSync();
@@ -330,7 +374,7 @@ async function saveField(key,value){
     const data=await api('/api/team/action',{type:'field',key,value});
     adoptTeam(data.team);
     roster=data.roster;if(!pending.length)sync='saved';updateSync();
-    if(key==='placeAnswer'&&hadPlace!==!!team.state.placeAnswer.trim())render();
+    if(key==='placeAnswer'&&hadPlace!==!!team.state.placeAnswer.trim()){render();if(pendingEvent(team.state)==='origin'&&!ui.seen.has('origin-ready')){ui.seen.add('origin-ready');toast(`! ${L().gbEventWaiting}`,'quest')}}
     else updateSummary();
   }catch(error){sync='offline';updateSync();toast(error.message,'error')}
 }
@@ -344,9 +388,14 @@ async function onAction(el){
     if(id==='language'){await flushAll();lang=lang==='en'?'ja':'en';localStorage.setItem('civ_lang',lang);render()}
     else if(id==='scene-replay'){scenePlaying=true;const scene=document.querySelector('.cinematic');if(scene){scene.classList.remove('playing','still');void scene.offsetWidth;scene.classList.add('playing')}const toggle=document.querySelector('[data-action="scene-skip"]');if(toggle)toggle.textContent=L().skipScene}
     else if(id==='scene-skip'){scenePlaying=!scenePlaying;const scene=document.querySelector('.cinematic');if(scene){scene.classList.toggle('playing',scenePlaying);scene.classList.toggle('still',!scenePlaying)}el.textContent=scenePlaying?L().skipScene:L().play}
-    else if(id==='banner-land'||id==='banner-scene'){ui.banner=id==='banner-land'?'land':'scene';ui.selected=null;patchBanner()}
-    else if(id==='cancel-move'){ui.selected=null;patchLand()}
-    else if(id==='logout'){await flushAll();await api('/api/logout',{});stream?.close();stream=null;session=null;team=null;serverTeam=null;pending=[];teacherDetail=null;teacherDetailId=null;presenceFields={};presenceSent=null;render()}
+    else if(id==='cancel-move'){ui.selected=null;patchBoard()}
+    else if(id.startsWith('drawer:')){openDrawer(id.slice(7))}
+    else if(id==='close-drawer'){ui.drawer=null;patchDrawer()}
+    else if(id.startsWith('open-event:')){openOverlay('event:'+id.slice(11))}
+    else if(id==='open-scene'){openOverlay('arrival')}
+    else if(id==='open-atlas'){openOverlay('atlas')}
+    else if(id==='close-overlay'){closeOverlay()}
+    else if(id==='logout'){await flushAll();await api('/api/logout',{});stream?.close();stream=null;session=null;team=null;serverTeam=null;pending=[];ui.drawer=null;ui.overlay=null;document.body.classList.remove('drawer-open');teacherDetail=null;teacherDetailId=null;presenceFields={};presenceSent=null;render()}
     else if(id==='next'||id==='previous'){await action({type:'stage',stage:team.state.stage+(id==='next'?1:-1)})}
     else if(id==='submit'){if(!confirm(L().submitConfirm))return;await actionQueue;await flushAll();const data=await api('/api/team/submit',{});adoptTeam(data.team);roster=data.roster;render();toast(L().submitted)}
     else if(id==='print'){window.print()}
@@ -360,8 +409,9 @@ async function onAction(el){
       const teamId=Number(id.split(':')[1]);
       if(!confirm(L().codeWarning))return;
       const data=await api(`/api/teacher/teams/${teamId}/new-code`,{});
-      newCodes.set(teamId,data.code);codeStore.save(newCodes);patchTeacher();
+      teams=teams.map(x=>x.id===teamId?{...x,code:data.code}:x);newCodes.delete(teamId);codeStore.save(newCodes);patchTeacher();
     }
+    else if(id==='letter-teams'){const data=await api('/api/teacher/letter-teams',{});teams=data.teams;render();toast(fmt(L().lettersAdded,data.made))}
     else if(id.startsWith('reopen:')){
       const teamId=Number(id.split(':')[1]);
       if(!confirm(L().reopenWarning))return;
@@ -380,6 +430,14 @@ async function onAction(el){
   }catch(error){toast(error.message,'error')}
 }
 
+// Objectives lead to the place where each one is done.
+function goTo(goal){
+  if(goal==='atlas'){if(team.state.fixedPoint)openOverlay('arrival');else if(team.state.mapPoint)openOverlay('atlas');else document.querySelector('.board-atlas')?.scrollIntoView({behavior:'smooth',block:'center'});return}
+  if(goal.startsWith('event:')){openOverlay(goal);return}
+  if(goal.startsWith('drawer:')){openDrawer(goal.slice(7));return}
+  const target=goal==='submit'?document.querySelector('[data-action="submit"]'):document.querySelector(`[data-field="${goal.slice(6)}"]`);
+  if(target){target.scrollIntoView({behavior:reducedMotion.matches?'auto':'smooth',block:'center'});target.focus({preventScroll:true})}
+}
 function chooseEvent(id,choice){
   const current=team.state.events?.[id];
   if(current&&current!==choice){
@@ -395,15 +453,16 @@ function chooseEvent(id,choice){
 // Delegated once on the persistent shell, so patching part of the page can never leave a
 // stale listener behind or bind the same form twice.
 app.addEventListener('click',event=>{
-  const el=event.target.closest('[data-action],[data-mode],[data-stage],[data-map],[data-pick],[data-avatar],[data-event],[data-building],[data-tile]');
+  const el=event.target.closest('[data-action],[data-mode],[data-stage],[data-map],[data-pick],[data-avatar],[data-event],[data-building],[data-tile],[data-goal]');
   if(!el||el.disabled)return;
-  if(el.dataset.building!==undefined){if(!submitted()){ui.selected=ui.selected===el.dataset.building?null:el.dataset.building;patchLand()}return}
+  if(el.dataset.building!==undefined){if(!submitted()){ui.selected=ui.selected===el.dataset.building?null:el.dataset.building;patchBoard()}return}
   if(el.dataset.tile!==undefined){
     const tile=Number(el.dataset.tile);
-    if(ui.selected){const id=ui.selected;ui.selected=null;if(team.state.tiles?.[id]===tile)patchLand();else action({type:'place',id,tile})}
-    else{ui.hover=tile;patchLand()}
+    if(ui.selected){const id=ui.selected;ui.selected=null;if(team.state.tiles?.[id]===tile)patchBoard();else action({type:'place',id,tile})}
+    else{ui.hover=tile;patchBoard()}
     return;
   }
+  if(el.dataset.goal!==undefined){goTo(el.dataset.goal);return}
   if(el.dataset.action!==undefined)onAction(el);
   else if(el.dataset.mode!==undefined){authMode=el.dataset.mode;render()}
   else if(el.dataset.stage!==undefined)action({type:'stage',stage:Number(el.dataset.stage)});
@@ -427,7 +486,7 @@ app.addEventListener('submit',event=>{
 app.addEventListener('input',event=>{
   const el=event.target;
   if(el.dataset?.field!==undefined)fieldInput(el);
-  else if(el.classList?.contains('code-input')){const cleaned=normalizeCode(el.value).slice(0,codeLength);if(el.value!==cleaned)el.value=cleaned}
+  else if(el.classList?.contains('code-input')){const cleaned=el.value.toUpperCase().replace(/[^A-Z0-9 -]/g,'').slice(0,16);if(el.value!==cleaned)el.value=cleaned}
 });
 app.addEventListener('focusin',event=>{if(event.target.dataset?.field!==undefined)postPresence(event.target.dataset.field)});
 // Reading the land: pointing at a hex explains it, and hovering a map pin fetches its art early.
@@ -435,11 +494,15 @@ app.addEventListener('mouseover',event=>{
   const pin=event.target.closest?.('[data-map]');
   if(pin){preload(pin.dataset.map);return}
   const hex=event.target.closest?.('[data-tile]');
-  if(hex&&!ui.selected&&ui.hover!==Number(hex.dataset.tile)){ui.hover=Number(hex.dataset.tile);morph(document.querySelector('#land-info'),landInfoMarkup(team,lang,L(),ui))}
+  if(hex&&!ui.selected&&ui.hover!==Number(hex.dataset.tile)){ui.hover=Number(hex.dataset.tile);morph(document.querySelector('#land-info'),tileInfo(team.state,lang,L(),ui.hover))}
 });
 // SVG hexes and buildings are not <button>s, so give them the keys a button has.
 app.addEventListener('keydown',event=>{
-  if(event.key==='Escape'&&ui.selected){ui.selected=null;patchLand();return}
+  if(event.key==='Escape'){
+    if(ui.selected){ui.selected=null;patchBoard();return}
+    if(ui.overlay){closeOverlay();return}
+    if(ui.drawer){ui.drawer=null;patchDrawer();return}
+  }
   const el=event.target;
   if((event.key==='Enter'||event.key===' ')&&el instanceof SVGElement&&(el.dataset.tile!==undefined||el.dataset.building!==undefined)){event.preventDefault();el.dispatchEvent(new MouseEvent('click',{bubbles:true}))}
 });

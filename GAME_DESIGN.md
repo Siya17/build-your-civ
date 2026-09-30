@@ -14,6 +14,10 @@ The activity asks students to connect geography, resources, technology, social o
 
 The app shares the current chapter and all answers across a team. This makes decision-making cooperative: students must discuss choices rather than building separate private versions. A completed submission is the clear finish state. The teacher can reopen it if the group needs to revise.
 
+## One board, one loop
+
+Each era follows the same loop on one screen: an event arrives over the map, the team decides, the land visibly changes, the team builds from the trees, and the council asks about what they just did. Questions name the team's own buildings, terrain and decisions, so answers stay tied to the choices behind them. The objectives list is also the navigation. There is still no score.
+
 ## Feedback and engagement
 
 - Development cards visibly unlock as prerequisites and event decisions are met. A core flowchart card is still needed in each tree.

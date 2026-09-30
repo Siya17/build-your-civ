@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { closeStreams, createAppServer } from './server/http.js';
-import { closeStore } from './server/store.js';
+import { closeStore, seedLetterTeams } from './server/store.js';
+
+// A new classroom database starts with Team A to Team K, one per map point.
+const seeded = seedLetterTeams();
+if (seeded.length) console.log(`Created ${seeded.length} teams: ${seeded.map(team => `${team.name} (${team.code})`).join(', ')}`);
 
 const production = process.env.NODE_ENV === 'production';
 let teacherPassword = process.env.TEACHER_PASSWORD;

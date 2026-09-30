@@ -50,12 +50,20 @@ export const avatars = 'ABCDEFGHIJK'.split('');
 export const eventChoices = {origin:['steward','explore'],steward:['share','reserve'],explore:['exchange','guard']};
 export const mapPoints = {A:[16.8,61.5],B:[14.2,39.4],C:[19.2,42.1],D:[26.4,45.8],E:[34.2,52.6],F:[36.6,38.2],G:[15.9,48.8],H:[43.8,71],I:[71.2,46.7],J:[78.8,61.5],K:[85.5,19.9]};
 
-// Join codes: no I, O, 0 or 1, so a code read aloud is hard to mishear.
+// Join codes are the team's short name and a three-digit PIN, read aloud as "A-427".
+// Teams created before this keep their nine-character codes from the older alphabet.
 export const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const codeLength = 9;
+export const codeLength = 13;
 // Codes are read aloud in groups, so accept any spacing or punctuation around the characters.
 export const normalizeCode = value => String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g,'');
-export const isCodeShape = code => code.length === codeLength && [...code].every(character => codeAlphabet.includes(character));
+const legacyCode = code => code.length === 9 && [...code].every(character => codeAlphabet.includes(character));
+export const isCodeShape = code => /^[A-Z0-9]{1,10}[0-9]{3}$/.test(code) || legacyCode(code);
+// "Team A" is tagged A; any other name uses its letters and digits, e.g. "River Makers" → RIVERMAKER.
+export function codeTag(name) {
+  const upper = String(name ?? '').normalize('NFKD').toUpperCase().trim();
+  const tag = (upper.match(/^TEAM\s+([A-Z0-9]+)$/)?.[1] ?? upper).replace(/[^A-Z0-9]/g,'').slice(0,10);
+  return tag || 'TEAM';
+}
 
 export function initialState() {
   return {stage:1,mapPoint:'',avatar:'',placeAnswer:'',techAnswer:'',societyAnswer:'',beliefAnswer:'',contactAnswer:'',tech:[],civic:[],events:{origin:'',encounter:''},tiles:{}};
@@ -91,6 +99,7 @@ export function applyAction(previous, action) {
     state.stage = next;
   } else if (action?.type === 'map') {
     if (!Object.hasOwn(mapPoints, action.point)) throw new Error('Invalid map point');
+    if (state.fixedPoint && action.point !== state.fixedPoint) throw new Error('Your teacher has set your homeland');
     if (state.mapPoint !== action.point) state.tiles = {};
     state.mapPoint = action.point;
     state.avatar = action.point;

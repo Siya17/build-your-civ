@@ -133,6 +133,33 @@ export const improvements = {
   route_stewards:b('Watchtower','見張り塔',['hills','mountain','desert','plains'],'Watchtowers guard routes at the edge.','見張り塔は端の道を守る。',{far:2})
 };
 
+// The hard season each place faces, from its field notes. It is drawn on the map before the
+// first decision and names the danger in the council's questions.
+const hazardByScene = {forest:'flood',plain:'flood',outback:'flood',savanna:'drought',dunes:'drought',steppe:'drought',coast:'storm',cascades:'storm',andes:'storm',ice:'frost',plateau:'frost'};
+export const hazardOf = point => hazardByScene[locations[point]?.scene] || '';
+
+// The path an outward first decision maps: a straight line from the settlement to the edge,
+// on land. The neighbouring community later appears beyond its end; a team that stayed
+// home meets its neighbours from the opposite side instead.
+export const DIRECTIONS = DIRS;
+const routes = new Map();
+export function route(point) {
+  const land = generateLand(point);
+  if (!land) return null;
+  if (routes.has(point)) return routes.get(point);
+  const line = d => [1,2,3].map(n => indexOf.get(`${DIRS[d][0] * n},${DIRS[d][1] * n}`));
+  const first = point.charCodeAt(0) % 6;
+  let dir = first;
+  for (let k = 0; k < 6; k++) { const d = (first + k) % 6; if (line(d).every(i => land.tiles[i] !== 'coast')) { dir = d; break; } }
+  const found = {dir, tiles:line(dir)};
+  routes.set(point, found);
+  return found;
+}
+export const neighbourDirection = state => {
+  const r = route(state.mapPoint);
+  return r ? (state.events?.origin === 'steward' ? (r.dir + 3) % 6 : r.dir) : 0;
+};
+
 // Travel technologies and an outward first decision reveal the far edge of the map.
 const travel = ['sailing','shipbuilding','navigation','horseback','wheel','route_mapping'];
 export function revealRadius(state) {
@@ -146,6 +173,13 @@ export const settlementSize = state => {
   const count = state.tech.length + state.civic.length;
   return count >= 9 ? 2 : count >= 4 ? 1 : 0;
 };
+
+// A hex is explored when it lies inside the revealed radius, or on the route the team mapped.
+export function isRevealed(state, i) {
+  if (!hexes[i]) return false;
+  if (hexes[i].dist <= revealRadius(state)) return true;
+  return state.events?.origin === 'explore' && !!route(state.mapPoint)?.tiles.includes(i);
+}
 
 export function fits(land, id, i) {
   const rule = improvements[id], hex = hexes[i];
@@ -165,7 +199,7 @@ export function placeError(state, id, i) {
   if (!chosenCards(state).includes(id)) return 'Choose this development before placing it';
   if (!Number.isInteger(i) || !hexes[i]) return 'Invalid tile';
   if (i === center) return 'Your settlement stands there';
-  if (hexes[i].dist > revealRadius(state)) return 'That land is not explored yet';
+  if (!isRevealed(state, i)) return 'That land is not explored yet';
   if (Object.entries(state.tiles || {}).some(([other, tile]) => tile === i && other !== id)) return 'Another building already stands there';
   if (!fits(land, id, i)) return 'This building does not suit that land';
   return '';
@@ -177,8 +211,8 @@ export function placeError(state, id, i) {
 export function settleTiles(state) {
   const land = generateLand(state.mapPoint);
   if (!land) return {};
-  const radius = revealRadius(state), tiles = {}, used = new Set([center]);
-  const open = (id, i) => Number.isInteger(i) && hexes[i] && !used.has(i) && hexes[i].dist <= radius && fits(land, id, i);
+  const tiles = {}, used = new Set([center]);
+  const open = (id, i) => Number.isInteger(i) && hexes[i] && !used.has(i) && isRevealed(state, i) && fits(land, id, i);
   for (const id of chosenCards(state)) {
     const i = state.tiles?.[id];
     if (open(id, i)) { tiles[id] = i; used.add(i); }
@@ -189,4 +223,13 @@ export function settleTiles(state) {
     if (i !== undefined) { tiles[id] = i; used.add(i); }
   }
   return tiles;
+}
+
+// Explored, free hexes where a card's building could stand: the land's answer to "does this
+// development suit us?", shown on every card in the trees.
+export function fitTiles(state, id) {
+  const land = generateLand(state.mapPoint);
+  if (!land || !improvements[id]) return [];
+  const taken = new Set(Object.entries(state.tiles || {}).filter(([other]) => other !== id).map(([, i]) => i));
+  return hexes.map((_, i) => i).filter(i => !taken.has(i) && isRevealed(state, i) && fits(land, id, i));
 }

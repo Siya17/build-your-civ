@@ -289,9 +289,43 @@ test('join codes survive being read aloud, and a wrong shape says so',limit,asyn
 
   const short=await joinTeam('ABC','Too Short');
   assert.equal(short.status,400);
-  assert.match(short.data.error,/9 letters and numbers/);
+  assert.match(short.data.error,/like A-427/);
   assert.equal((await joinTeam('ZZZZZZZZZ','No Such Team')).status,401,'a well-formed code matching nothing is a different answer');
   assert.equal((await joinTeam(team.code,'X')).status,400,'a name still has to be a name');
+});
+
+test('join codes are the team name and a PIN, and the teacher can always read them',limit,async()=>{
+  const teacher=await signInTeacher();
+  const team=await makeTeam(teacher,'River Makers');
+  assert.match(team.code,/^RIVERMAKER-\d{3}$/);
+  assert.equal((await joinTeam(team.code.replace('-',' '),'Kai')).status,200);
+  const listed=(await request('/api/me',undefined,teacher)).data.teams.find(x=>x.id===team.id);
+  assert.equal(listed.code,team.code,'the code is still readable later');
+  const fresh=await request(`/api/teacher/teams/${team.id}/new-code`,{},teacher);
+  assert.match(fresh.data.code,/^RIVERMAKER-\d{3}$/);
+  assert.equal((await joinTeam(team.code,'Late')).status,401,'the old code stops working');
+  assert.equal((await joinTeam(fresh.data.code,'Late')).status,200);
+});
+
+test('teams A to K start on their own map point and can be restored after deletion',limit,async()=>{
+  const teacher=await signInTeacher();
+  const added=await request('/api/teacher/letter-teams',{},teacher);
+  assert.equal(added.status,200);
+  const letters=added.data.teams.filter(x=>x.state.fixedPoint);
+  assert.deepEqual(letters.map(x=>x.state.fixedPoint).sort(),'ABCDEFGHIJK'.split(''));
+  const teamC=letters.find(x=>x.state.fixedPoint==='C');
+  assert.equal(teamC.name,'Team C');
+  assert.match(teamC.code,/^C-\d{3}$/);
+  assert.equal(teamC.state.mapPoint,'C');
+  const student=await joinTeam(teamC.code,'Nao');
+  assert.equal(student.data.team.state.mapPoint,'C','the team arrives already at its homeland');
+  assert.equal((await request('/api/team/action',{type:'map',point:'D'},student.cookie)).status,400,'the homeland is fixed');
+  assert.equal((await request('/api/teacher/letter-teams',{},teacher)).data.made,0,'nothing is duplicated');
+  await request(`/api/teacher/teams/${teamC.id}`,{},teacher,{method:'DELETE'});
+  const restored=await request('/api/teacher/letter-teams',{},teacher);
+  assert.equal(restored.data.made,1);
+  assert(restored.data.teams.some(x=>x.state.fixedPoint==='C'&&x.id!==teamC.id));
+  assert.equal((await request('/api/teacher/letter-teams',{},student.cookie)).status,401,'students cannot add teams');
 });
 
 test('sign-in limits use the forwarded address only when the proxy is trusted',limit,async()=>{
@@ -306,7 +340,7 @@ test('sign-in limits use the forwarded address only when the proxy is trusted',l
 });
 
 test('static assets are cached by content and compressed',limit,async()=>{
-  for (const path of ['/bootstrap.js','/app.js','/rpg.js','/student-view.js','/hexmap.js','/shared/game.js','/shared/i18n.js','/shared/world.js','/shared/land.js']) {
+  for (const path of ['/bootstrap.js','/app.js','/rpg.js','/student-view.js','/hexmap.js','/prompts.js','/shared/game.js','/shared/i18n.js','/shared/world.js','/shared/land.js']) {
     const asset=await fetch(base+path);
     assert.equal(asset.status,200,`${path} loads for the browser`);
     assert.match(asset.headers.get('content-type'),/javascript/,`${path} is served as JavaScript`);

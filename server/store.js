@@ -1,8 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { applyAction, codeAlphabet, initialState, isCodeShape, normalizeCode, submissionGaps, mapPoints } from '../shared/game.js';
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { applyAction, codeTag, initialState, isCodeShape, normalizeCode, submissionGaps, mapPoints } from '../shared/game.js';
 import { settleTiles } from '../shared/land.js';
 
 const dataDir = resolve(process.env.DATA_DIR || join(process.cwd(), 'data'));
@@ -38,8 +38,13 @@ CREATE TABLE IF NOT EXISTS activity_log (
   action_type TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS log_team ON activity_log(team_id,id);`);
+
+// The readable join code is kept so the teacher can read it out at any time. Databases made
+// before that only have the hash; their codes still work, the teacher just issues new ones.
+if (!db.prepare('PRAGMA table_info(teams)').all().some(column => column.name === 'code')) db.exec('ALTER TABLE teams ADD COLUMN code TEXT');
 
 // Prepared once: the 30-student sign-in burst and every keystroke save runs through these.
 const statements = {
@@ -47,10 +52,12 @@ const statements = {
   teamByCodeHash: db.prepare('SELECT * FROM teams WHERE code_hash=?'),
   codeHashTaken: db.prepare('SELECT 1 FROM teams WHERE code_hash=?'),
   allTeams: db.prepare('SELECT * FROM teams ORDER BY id'),
-  insertTeam: db.prepare('INSERT INTO teams (name,code_hash,state_json) VALUES (?,?,?)'),
+  insertTeam: db.prepare('INSERT INTO teams (name,code_hash,code,state_json) VALUES (?,?,?,?)'),
   renameTeam: db.prepare('UPDATE teams SET name=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
   deleteTeam: db.prepare('DELETE FROM teams WHERE id=?'),
-  setCodeHash: db.prepare('UPDATE teams SET code_hash=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
+  setCodeHash: db.prepare('UPDATE teams SET code_hash=?,code=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
+  getSetting: db.prepare('SELECT value FROM settings WHERE key=?'),
+  putSetting: db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'),
   setState: db.prepare('UPDATE teams SET state_json=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
   markSubmitted: db.prepare('UPDATE teams SET submitted_at=CURRENT_TIMESTAMP,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
   clearSubmitted: db.prepare('UPDATE teams SET submitted_at=NULL,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?'),
@@ -74,22 +81,40 @@ const rowTeam = row => {
   state.avatar=Object.hasOwn(mapPoints,state.mapPoint)?state.mapPoint:'';
   // Teams saved before the homeland map existed get their buildings laid out on load.
   state.tiles=settleTiles(state);
-  return {id:row.id,name:row.name,state,version:row.version,submittedAt:row.submitted_at,createdAt:row.created_at,updatedAt:row.updated_at};
+  return {id:row.id,name:row.name,code:row.code||null,state,version:row.version,submittedAt:row.submitted_at,createdAt:row.created_at,updatedAt:row.updated_at};
 };
-const randomCode = () => Array.from(randomBytes(9), n => codeAlphabet[n % codeAlphabet.length]).join('');
 const cleanName = name => String(name ?? '').trim().slice(0, 80);
-function freshCodeHash() {
+// The team's tag and a fresh three-digit PIN. The hash, which sign-in looks up, is unique.
+function freshCode(name) {
+  const tag = codeTag(name);
   let code, codeHash;
-  do { code = randomCode(); codeHash = hash(code); } while (statements.codeHashTaken.get(codeHash));
+  do { code = `${tag}-${randomInt(100, 1000)}`; codeHash = hash(normalizeCode(code)); } while (statements.codeHashTaken.get(codeHash));
   return { code, codeHash };
 }
 
-export function createTeam(name) {
+// A team made for a map point starts there, and keeps that homeland for the whole game.
+export function createTeam(name, point = '') {
   const clean = cleanName(name);
   if (!clean) throw new Error('Enter a team name');
-  const { code, codeHash } = freshCodeHash();
-  const result = statements.insertTeam.run(clean,codeHash,JSON.stringify(initialState()));
-  return {...getTeam(Number(result.lastInsertRowid)),code};
+  if (point && !Object.hasOwn(mapPoints, point)) throw new Error('Invalid map point');
+  const state = point ? {...initialState(), mapPoint:point, avatar:point, fixedPoint:point} : initialState();
+  const { code, codeHash } = freshCode(clean);
+  const result = statements.insertTeam.run(clean,codeHash,code,JSON.stringify(state));
+  return getTeam(Number(result.lastInsertRowid));
+}
+
+// One team per map point, "Team A" to "Team K". Adds only the letters no team holds, so the
+// teacher can delete a team and bring it back later without duplicating the others.
+export function addLetterTeams() {
+  const taken = new Set(listTeams().map(team => team.state.fixedPoint).filter(Boolean));
+  return Object.keys(mapPoints).filter(point => !taken.has(point)).map(point => createTeam(`Team ${point}`, point));
+}
+// The first time a classroom database opens, the A–K teams are already waiting.
+export function seedLetterTeams() {
+  if (statements.getSetting.get('letter_teams_seeded')) return [];
+  const made = addLetterTeams();
+  statements.putSetting.run('letter_teams_seeded', new Date().toISOString());
+  return made;
 }
 
 export function renameTeam(id, name) {
@@ -104,10 +129,12 @@ export function deleteTeam(id) {
   if (!statements.deleteTeam.run(id).changes) throw new Error('Team not found');
 }
 
+// A new code follows the team's current name, so a renamed team can get a matching code.
 export function regenerateCode(id) {
-  if (!getTeam(id)) throw new Error('Team not found');
-  const { code, codeHash } = freshCodeHash();
-  statements.setCodeHash.run(codeHash,id);
+  const team = getTeam(id);
+  if (!team) throw new Error('Team not found');
+  const { code, codeHash } = freshCode(team.name);
+  statements.setCodeHash.run(codeHash,code,id);
   return code;
 }
 

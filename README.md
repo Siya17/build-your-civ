@@ -4,13 +4,17 @@ A bilingual, shared classroom game for the Tama University Week 2 activity. The 
 
 ## What it does
 
-- Teacher creates teams and gives each team a nine-character join code.
+- A new classroom starts with eleven teams, Team A to Team K. Each one begins at, and keeps, its own map point. The teacher can delete any team, bring missing letters back with "Add missing teams A–K", and create extra teams, which choose their own place.
+- Each team's join code is its short name and a three-digit PIN, e.g. `A-427` or `RIVERMAKER-315`. Students can type it in any case, with or without the dash. The teacher page shows every code at all times, and "New join code" replaces one. Codes from before this change still work.
 - Students sign in with the team code and their names. No university account integration is required.
 - Each team shares one character, chapter, set of choices, and five short answers. Live events update teammates’ screens.
 - A–K each open a distinct seven-second animated landscape and a bilingual, sourced geography card. Motion can be replayed or stopped.
 - Four quests and badges guide the team through two branching story events. Event choices unlock special development cards and show a possible benefit and tradeoff.
 - The science and society trees each permit seven choices, with prerequisites checked by the server. They are drawn as connected trees, and the chosen path lights up.
 - Each team has a hex homeland built from its map point: coast, rivers, mountains and deserts follow the geography card. Every chosen card raises a building on a fitting hex. Teams can move buildings, and pointing at a hex explains which buildings suit that land. Exploring outward and travel technologies clear the fog. The settlement grows from village to town to city. There is no score.
+- The student screen is one game board. An era track runs across the top. The council column on the left holds the era's objectives (each one leads to its task) and the council's questions. The homeland map is in the centre, with the trees in a drawer over it. Story events arrive as cards over the map. After a decision, the card turns over to show what changed and the card it unlocked.
+- Decisions show on the land. The place's hard season (flood, drought, storm or frost) is marked before the first decision. Protecting supplies lights the stores; mapping paths outward draws a route that clears the fog. In era 3 a neighbouring camp appears at the edge, joined by a road, carts, a watchtower or a wall.
+- Council questions and sentence starters are written from the team's own place, buildings, cards and decisions. The five answers the teacher receives are unchanged.
 - Clicks update the page immediately, and the server's answer confirms or rolls back the change. Only the changed parts of the page are redrawn.
 - A complete team can submit once. Submission locks editing until the teacher reopens it.
 - The teacher dashboard shows team progress, rosters, and submitted answers.
@@ -37,7 +41,8 @@ Run tests with `npm test`. The server stores activity data in `data/classroom.sq
 | `shared/game.js` | Shared game content, branch rules, prerequisites, and validation |
 | `shared/world.js` | Bilingual A–K geography cards, source links, characters, and outcomes |
 | `shared/land.js` | Homeland terrain per map point, buildings per card, fog of war and placement rules |
-| `public/hexmap.js` | SVG drawing of the homeland map |
+| `public/hexmap.js` | SVG drawing of the homeland map and the story decisions on it |
+| `public/prompts.js` | Council questions and sentence starters written from the team's choices |
 | `server/http.js` | HTTP API, authentication, live event stream |
 | `server/store.js` | SQLite storage, sessions, submissions |
 | `tests/` | Game and 30-student integration tests |

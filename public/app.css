@@ -34,3 +34,5 @@
 .share-50{--share:50%}.share-60{--share:60%}.share-70{--share:70%}.share-80{--share:80%}.share-90{--share:90%}.share-100{--share:100%}
 .activity-row b{color:#54756a;font-size:10px;white-space:nowrap}
 .activity-empty{font-size:11px;color:var(--muted);margin:0}
+/* Teacher page: A–K teams carry their map letter, and the add button fills in missing ones. */
+.team-card-top>div{flex:1;min-width:0}.team-card-top .team-letter{display:grid;place-items:center;width:38px;height:38px;min-width:38px;border-radius:50%;background:#123f3d;color:#f0d49a;font-family:Georgia,serif;font-size:18px;font-weight:400;letter-spacing:0;padding:0}.letter-teams{margin-top:14px;width:100%}
