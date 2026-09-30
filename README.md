@@ -33,6 +33,17 @@ Open the URL printed in the terminal (usually [http://127.0.0.1:5173](http://127
 
 Run tests with `npm test`. The server stores activity data in `data/classroom.sqlite` and a local secret in `data/secret.key`. Back up the whole `data` directory after class. Do not commit or share it.
 
+## Cooperative strategy engine
+
+The opt-in rules engine in `shared/strategy/` adds one fixed era, twelve seasonal
+rounds, paid permanent districts, adjacency yields, asymmetric civilizations,
+physical supply routes, ecosystem crises and a cooperative Winter Sanctuary.
+Run `npm run demo:coop` for a complete legal session. Its TypeScript contracts are
+in `shared/strategy/types.d.ts`; runtime code remains dependency-free JavaScript.
+See [COOPERATIVE_DESIGN.md](COOPERATIVE_DESIGN.md) for the repository audit, rules
+and four-step integration roadmap. The existing browser classroom game and saved
+teams retain their current behavior; the new engine is not yet connected to its UI.
+
 ## Project layout
 
 | Path | Purpose |
