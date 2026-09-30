@@ -114,28 +114,31 @@ test('30 students can join, share stages and answers, then submit once',limit,as
   assert.equal((await request('/api/me',undefined,b)).data.roster.length,1,'only the caller remains');
   assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.joined.length,30,'attendance keeps everyone');
 
-  await request('/api/team/action',{type:'field',key:'location',value:'River valley'},b);
+  await request('/api/team/action',{type:'field',key:'placeAnswer',value:'The river helps travel but flooding is difficult.'},b);
   await request('/api/team/action',{type:'stage',stage:2},a);
   const seen=await request('/api/me',undefined,b);
   assert.equal(seen.data.team.state.mapPoint,'A');
-  assert.equal(seen.data.team.state.location,'River valley');
+  assert.equal(seen.data.team.state.placeAnswer,'The river helps travel but flooding is difficult.');
+  assert.equal(seen.data.team.state.avatar,'A');
   assert.equal(seen.data.team.state.stage,2);
   assert.equal((await request('/api/me',undefined,outsider.cookie)).data.team.state.mapPoint,'','the other team is untouched');
 
   const early=await request('/api/team/submit',{},b);
   assert.equal(early.status,400);
   assert(early.data.gaps.includes('tech'));
-  for(const [key,value] of Object.entries({terrain:'Warm',resources:'Clay',govt:'Council',economy:'Trade',belief:'Shared rituals',geographyUse:'Use river',impact:'Boats connect people',connection:'Exchange pottery'})) {
+  for(const [key,value] of Object.entries({techAnswer:'Pottery stores water',societyAnswer:'Council shares food',beliefAnswer:'Shared rituals',contactAnswer:'Exchange pottery, but some people may lose access'})) {
     assert.equal((await request('/api/team/action',{type:'field',key,value},a)).status,200);
   }
+  assert.equal((await request('/api/team/action',{type:'event',id:'origin',choice:'explore'},a)).status,200);
   for(const [tree,id] of [['tech','pottery'],['civic','laws']]) assert.equal((await request('/api/team/action',{type:'pick',tree,id},a)).status,200);
+  assert.equal((await request('/api/team/action',{type:'event',id:'encounter',choice:'exchange'},a)).status,200);
   const submitted=await request('/api/team/submit',{},b);
   assert.equal(submitted.status,200);
   assert(submitted.data.team.submittedAt);
-  assert.equal((await request('/api/team/action',{type:'field',key:'impact',value:'Changed'},a)).status,400);
-  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.connection,'Exchange pottery');
+  assert.equal((await request('/api/team/action',{type:'field',key:'contactAnswer',value:'Changed'},a)).status,400);
+  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.contactAnswer,'Exchange pottery, but some people may lose access');
   assert.equal((await request(`/api/teacher/teams/${made.id}/reopen`,{},teacher)).status,200);
-  assert.equal((await request('/api/team/action',{type:'field',key:'impact',value:'Changed'},a)).status,200);
+  assert.equal((await request('/api/team/action',{type:'field',key:'contactAnswer',value:'Changed'},a)).status,200);
 });
 
 test('presence tells teammates which field someone is writing in',limit,async()=>{
@@ -146,10 +149,10 @@ test('presence tells teammates which field someone is writing in',limit,async()=
   const watching=await openStream(watcher.cookie);
   await openStream(writer.cookie);
 
-  assert.equal((await request('/api/team/presence',{field:'terrain'},writer.cookie)).status,200);
-  const frame=await watching.waitFor(f=>f.startsWith('event: presence')&&f.includes('"terrain"'),'a presence event for terrain');
+  assert.equal((await request('/api/team/presence',{field:'placeAnswer'},writer.cookie)).status,200);
+  const frame=await watching.waitFor(f=>f.startsWith('event: presence')&&f.includes('"placeAnswer"'),'a presence event for placeAnswer');
   const payload=dataOf(frame);
-  assert.deepEqual(payload.fields.terrain,['Kenji']);
+  assert.deepEqual(payload.fields.placeAnswer,['Kenji']);
   assert(payload.roster.includes('Mei')&&payload.roster.includes('Kenji'),'and carries the live roster');
   assert(!watching.frames.some(f=>f.startsWith('event: team')),'presence never re-sends team state');
 
@@ -157,7 +160,62 @@ test('presence tells teammates which field someone is writing in',limit,async()=
   const cleared=await watching.waitFor(f=>f.includes('"fields":{}'),'presence being cleared on blur');
   assert.deepEqual(dataOf(cleared).fields,{});
   assert.equal((await request('/api/team/presence',{field:'not-a-field'},writer.cookie)).status,400);
-  assert.equal((await request('/api/team/presence',{field:'terrain'},teacher)).status,401,'teachers have no presence');
+  assert.equal((await request('/api/team/presence',{field:'placeAnswer'},teacher)).status,401,'teachers have no presence');
+});
+
+test('branch decisions and character choices reach teammates; resets remove gated cards',limit,async()=>{
+  const teacher=await signInTeacher();
+  const team=await makeTeam(teacher,'Branch Team');
+  const writer=await joinTeam(team.code,'Aki');
+  const watcher=await joinTeam(team.code,'Sora');
+  const stream=await openStream(watcher.cookie);
+  const act=body=>request('/api/team/action',body,writer.cookie);
+  await act({type:'map',point:'H'});
+  await act({type:'field',key:'placeAnswer',value:'Seasonal rain changes travel.'});
+  assert((await stream.waitFor(frame=>frame.includes('"avatar":"H"'))).startsWith('event: team'));
+  assert.equal((await act({type:'avatar',id:'A'})).status,400);
+  assert.equal((await act({type:'event',id:'origin',choice:'steward'})).status,200);
+  assert.equal((await act({type:'pick',tree:'tech',id:'preservation'})).status,200);
+  assert.equal((await act({type:'pick',tree:'tech',id:'pottery'})).status,200);
+  assert.equal((await act({type:'event',id:'encounter',choice:'share'})).status,200);
+  assert.equal((await act({type:'pick',tree:'civic',id:'mutual_aid'})).status,200);
+  const changed=await act({type:'event',id:'origin',choice:'explore'});
+  assert.equal(changed.status,200);
+  assert.deepEqual(changed.data.team.state.events,{origin:'explore',encounter:''});
+  assert(!changed.data.team.state.tech.includes('preservation'));
+  assert(!changed.data.team.state.civic.includes('mutual_aid'));
+  assert(changed.data.team.state.tech.includes('pottery'));
+  assert((await stream.waitFor(frame=>frame.includes('"origin":"explore"'))).startsWith('event: team'));
+});
+
+test('moving a building reaches teammates, and no team can build on another team map',limit,async()=>{
+  const teacher=await signInTeacher();
+  const home=await makeTeam(teacher,'Builders');
+  const other=await makeTeam(teacher,'Neighbours');
+  const builder=await joinTeam(home.code,'Hana');
+  const watcher=await joinTeam(home.code,'Ren');
+  const outsider=await joinTeam(other.code,'Yui');
+  const stream=await openStream(watcher.cookie);
+  const act=(body,cookie=builder.cookie)=>request('/api/team/action',body,cookie);
+  await act({type:'map',point:'E'});
+  await act({type:'field',key:'placeAnswer',value:'The river floods and feeds the fields.'});
+  const picked=await act({type:'pick',tree:'tech',id:'pottery'});
+  assert.equal(picked.status,200);
+  const from=picked.data.team.state.tiles.pottery;
+  assert(Number.isInteger(from),'the granary is placed automatically');
+  const {generateLand,hexes,fits}=await import('../shared/land.js');
+  const land=generateLand('E');
+  const to=hexes.findIndex((h,i)=>h.dist===1&&i!==from&&fits(land,'pottery',i));
+  const moved=await act({type:'place',id:'pottery',tile:to});
+  assert.equal(moved.status,200);
+  assert.equal(moved.data.team.state.tiles.pottery,to);
+  assert((await stream.waitFor(frame=>frame.includes(`"tiles":{"pottery":${to}}`))).startsWith('event: team'));
+  assert.equal((await act({type:'place',id:'pottery',tile:40})).status,400,'a tile off the map is refused');
+  // The other team has not chosen pottery and has no map point, so the same request fails
+  // there and leaves this team untouched.
+  assert.equal((await act({type:'place',id:'pottery',tile:from},outsider.cookie)).status,400);
+  const after=await request('/api/me',undefined,builder.cookie);
+  assert.equal(after.data.team.state.tiles.pottery,to);
 });
 
 test('a disconnected stream does not stop delivery to the rest of the team',limit,async()=>{
@@ -207,8 +265,8 @@ test('activity log reports what each student saved',limit,async()=>{
   const team=await makeTeam(teacher,'Busy Team');
   const busy=await joinTeam(team.code,'Hana');
   const quiet=await joinTeam(team.code,'Ren');
-  for(const value of ['One','Two','Three']) await request('/api/team/action',{type:'field',key:'terrain',value},busy.cookie);
-  await request('/api/team/action',{type:'field',key:'resources',value:'Clay'},quiet.cookie);
+  for(const value of ['One','Two','Three']) await request('/api/team/action',{type:'field',key:'placeAnswer',value},busy.cookie);
+  await request('/api/team/action',{type:'field',key:'techAnswer',value:'Clay'},quiet.cookie);
 
   const activity=await request(`/api/teacher/teams/${team.id}/activity`,undefined,teacher);
   assert.equal(activity.status,200);
@@ -248,7 +306,7 @@ test('sign-in limits use the forwarded address only when the proxy is trusted',l
 });
 
 test('static assets are cached by content and compressed',limit,async()=>{
-  for (const path of ['/bootstrap.js','/app.js','/shared/game.js','/shared/i18n.js']) {
+  for (const path of ['/bootstrap.js','/app.js','/rpg.js','/student-view.js','/hexmap.js','/shared/game.js','/shared/i18n.js','/shared/world.js','/shared/land.js']) {
     const asset=await fetch(base+path);
     assert.equal(asset.status,200,`${path} loads for the browser`);
     assert.match(asset.headers.get('content-type'),/javascript/,`${path} is served as JavaScript`);
@@ -266,6 +324,9 @@ test('static assets are cached by content and compressed',limit,async()=>{
   const map=await fetch(base+'/map-points.css');
   assert.equal(map.status,200);
   assert.match(await map.text(),/\.map-dot\[data-map="A"\]\{left:16\.8%;top:61\.5%\}/,'generated from shared/game.js');
+  const rpgCss=await fetch(base+'/rpg.css');
+  assert.equal(rpgCss.status,200);
+  assert.match(await rpgCss.text(),/terrain-drift 7s/);
   const image=await fetch(base+'/assets/world-hero.webp');
   assert.match(image.headers.get('cache-control'),/max-age=86400/);
   await image.arrayBuffer();

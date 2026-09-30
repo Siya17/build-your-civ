@@ -12,14 +12,24 @@ const sourceFiles = {
   '/':['public/index.html','text/html; charset=utf-8'],
   '/bootstrap.js':['public/bootstrap.js','text/javascript; charset=utf-8'],
   '/app.js':['public/app.js','text/javascript; charset=utf-8'],
+  '/rpg.js':['public/rpg.js','text/javascript; charset=utf-8'],
+  '/student-view.js':['public/student-view.js','text/javascript; charset=utf-8'],
+  '/hexmap.js':['public/hexmap.js','text/javascript; charset=utf-8'],
   '/app.css':['public/app.css','text/css; charset=utf-8'],
+  '/rpg.css':['public/rpg.css','text/css; charset=utf-8'],
   '/shared/game.js':['shared/game.js','text/javascript; charset=utf-8'],
+  '/shared/world.js':['shared/world.js','text/javascript; charset=utf-8'],
+  '/shared/land.js':['shared/land.js','text/javascript; charset=utf-8'],
   '/shared/i18n.js':['shared/i18n.js','text/javascript; charset=utf-8'],
   '/assets/slide8-map.png':['public/assets/slide8-map.png','image/png'],
   '/assets/world-hero.webp':['public/assets/world-hero.webp','image/webp'],
   '/assets/river-place.webp':['public/assets/river-place.webp','image/webp'],
   '/assets/meeting.webp':['public/assets/meeting.webp','image/webp']
 };
+for(const point of Object.keys(mapPoints)) {
+  for(const folder of ['portraits','lands']) sourceFiles[`/assets/${folder}/${point}.webp`]=[`public/assets/${folder}/${point}.webp`,'image/webp'];
+}
+sourceFiles['/assets/portraits/guide.webp']=['public/assets/portraits/guide.webp','image/webp'];
 // The strict CSP forbids inline styles, so the map pin positions are served as CSS
 // generated from the one definition in shared/game.js rather than copied into app.css.
 const mapPointCss = Object.entries(mapPoints).map(([letter,[left,top]])=>`.map-dot[data-map="${letter}"]{left:${left}%;top:${top}%}`).join('');

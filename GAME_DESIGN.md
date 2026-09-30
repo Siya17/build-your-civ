@@ -6,24 +6,26 @@ The activity asks students to connect geography, resources, technology, social o
 
 ## Player loop
 
-1. **Observe:** receive an A–K place from the current slide map and describe its resources and constraints.
-2. **Choose:** make a limited set of science and society choices. Prerequisites create a visible path and force prioritization.
-3. **Explain:** connect choices to government, economy, beliefs, ordinary life, and a remaining challenge.
-4. **Connect:** imagine meeting another society and identify what might travel between them.
-5. **Submit:** agree on a team story and send it to the teacher.
+1. **Explore:** receive an A–K place, watch its short illustrated scene, read sourced geography clues, and choose a shared cosmetic character.
+2. **Decide:** respond to an uncertain season; the choice unlocks one technology card. Choose a path through the original science tree.
+3. **Encounter:** respond to another community; the event changes with the first decision and unlocks one society card. Choose a path through the original civics tree.
+4. **Explain:** answer five short prompts covering geography, technology, government and economy, beliefs, and contact with its benefits and costs.
+5. **Submit:** read the civilization chronicle, agree on a team story, and send it to the teacher.
 
 The app shares the current chapter and all answers across a team. This makes decision-making cooperative: students must discuss choices rather than building separate private versions. A completed submission is the clear finish state. The teacher can reopen it if the group needs to revise.
 
 ## Feedback and engagement
 
-- Development cards visibly unlock as prerequisites are met.
+- Development cards visibly unlock as prerequisites and event decisions are met. A core flowchart card is still needed in each tree.
+- The homeland map turns choices into a place. Each card becomes a building, and a building can stand only on land that suits it (a harbor needs water, farms need a water source nearby). Moving buildings and reading hexes prompts the "why here?" discussion that the geography answer asks for. Placement is optional and never counts toward submission. The growing settlement shows development without ranking teams.
 - The seven-card budget and path list show the effect of each choice immediately.
+- The guide, four quests, character portraits, animated place scenes, and card reveals provide RPG feedback without ranking teams.
 - A live roster and save state show that teammates are working in the same world.
 - Scene art and short chapter transitions give each part of the activity a distinct mood.
 - The presentation preview shows how raw choices become a coherent explanation.
 - Submission gaps show exactly what the team still needs to discuss.
 
-There is deliberately no numeric civilization score. A score would reward one path through the flowcharts and could imply that real societies followed a single ladder of progress. The choices and artwork are conversation aids, not claims of historical inevitability.
+There is deliberately no numeric civilization score. A score would reward one path through the flowcharts and could imply that real societies followed a single ladder of progress. Badges recognize completion of discussion tasks, not the value of any historical society. Teams can change event decisions before submission; the interface warns when later choices or cards will reset. The choices and artwork are conversation aids, not claims of historical inevitability.
 
 ## Classroom facilitation
 

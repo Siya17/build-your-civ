@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { applyAction, codeAlphabet, initialState, isCodeShape, normalizeCode, submissionGaps } from '../shared/game.js';
+import { applyAction, codeAlphabet, initialState, isCodeShape, normalizeCode, submissionGaps, mapPoints } from '../shared/game.js';
+import { settleTiles } from '../shared/land.js';
 
 const dataDir = resolve(process.env.DATA_DIR || join(process.cwd(), 'data'));
 mkdirSync(dataDir, { recursive: true });
@@ -66,7 +67,15 @@ const statements = {
 statements.expireSessions.run(Date.now());
 
 const hash = value => createHmac('sha256', secret).update(value).digest('hex');
-const rowTeam = row => row && ({id:row.id,name:row.name,state:JSON.parse(row.state_json),version:row.version,submittedAt:row.submitted_at,createdAt:row.created_at,updatedAt:row.updated_at});
+const rowTeam = row => {
+  if(!row)return null;
+  const state=JSON.parse(row.state_json);
+  // Existing teams keep their work; the shared portrait now follows the map point.
+  state.avatar=Object.hasOwn(mapPoints,state.mapPoint)?state.mapPoint:'';
+  // Teams saved before the homeland map existed get their buildings laid out on load.
+  state.tiles=settleTiles(state);
+  return {id:row.id,name:row.name,state,version:row.version,submittedAt:row.submitted_at,createdAt:row.created_at,updatedAt:row.updated_at};
+};
 const randomCode = () => Array.from(randomBytes(9), n => codeAlphabet[n % codeAlphabet.length]).join('');
 const cleanName = name => String(name ?? '').trim().slice(0, 80);
 function freshCodeHash() {
