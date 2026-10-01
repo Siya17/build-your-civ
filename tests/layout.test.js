@@ -14,6 +14,16 @@ test('explicit learned plans stay unbuilt after unrelated actions and legacy cho
  const pottery=applyAction(start,{type:'pick',tree:'tech',id:'pottery'});assert(Number.isInteger(pottery.tiles.pottery));
  assert.deepEqual(start.tech,[]);assert.throws(()=>applyAction(start,{type:'pick',tree:'tech',id:'pottery',tile:center}),/settlement/);
 });
+
+test('explicit selection is idempotent and returning a building to a plan preserves dependent knowledge',()=>{
+ const start={...initialState(),mapPoint:'E',avatar:'E'};
+ let s=applyAction(start,{type:'pick',tree:'tech',id:'pottery'});s=applyAction(s,{type:'pick',tree:'tech',id:'writing',tile:null});
+ const tile=s.tiles.pottery,plan=applyAction(s,{type:'pick',tree:'tech',id:'pottery',tile:null});
+ assert.deepEqual(plan.tech,['pottery','writing']);assert.equal(plan.tiles.pottery,undefined);assert(plan.plannedBuildings.includes('pottery'));
+ const placed=applyAction(plan,{type:'pick',tree:'tech',id:'pottery',tile});
+ assert.deepEqual(placed.tech,plan.tech);assert.equal(placed.tiles.pottery,tile);assert(!placed.plannedBuildings.includes('pottery'));
+ assert.deepEqual(applyAction(placed,{type:'pick',tree:'tech',id:'pottery'}).tech,[],'legacy toggles still remove dependent choices');
+});
 test('storage movement changes food protection and hard-season outcome',()=>{
  let s=base(),land=generateLand(s.mapPoint);
  const food=hexes.findIndex((h,i)=>h.dist===2&&land.tiles[i]==='river');
@@ -81,6 +91,24 @@ test('route operation depends on actual connections without changing route selec
  s=link(s,trade);assert.equal(assessLayout(s).routes.land.operational,true);
  const path=suggestTrail(s,trade),b=applyAction(s,{type:'trail',path,mode:'remove'});
  assert.equal(b.route,'land');assert.equal(assessLayout(b).routes.land.operational,false);
+});
+
+test('water routes need a connected harbor and revealed water to the edge',()=>{
+ let s={...base('B'),tech:['pottery','sailing'],civic:['laws','trade'],route:'water',plannedBuildings:['pottery','sailing','laws','trade']},land=generateLand('B');
+ const harbor=fitTiles(s,'sailing').find(i=>land.tiles[i]==='coast'&&neighbours[i].some(n=>land.tiles[n]!=='coast'));
+ const trade=fitTiles(s,'trade').find(i=>i!==harbor);
+ s={...s,tiles:{sailing:harbor,trade}};assert.equal(assessLayout(s).routes.water.operational,false);
+ s=link(link(s,harbor),trade);assert.equal(assessLayout(s).routes.water.operational,true);
+ const unbuilt={...s,tiles:{trade}};assert.equal(assessLayout(unbuilt).routes.water.operational,false);assert.equal(unbuilt.route,'water');
+});
+
+test('automatic building connections still need a confirmed outward trail for a land route',()=>{
+ let s={...base('F'),tech:['mining','wheel'],civic:['laws','trade'],route:'land',plannedBuildings:['mining','wheel','laws','trade']},land=generateLand('F');
+ const paths=fitTiles(s,'trade').filter(i=>hexes[i].dist===3).map(i=>suggestTrail(s,i));
+ const path=paths.find(p=>p?.length===4&&fits(land,'laws',p[1])&&fits(land,'wheel',p[2]));assert(path);
+ s={...s,tiles:{laws:path[1],wheel:path[2],trade:path[3]}};
+ assert(assessLayout(s).buildings.trade.connected);assert(assessLayout(s).routes.land.missing.includes('landEdge'));
+ assert.equal(assessLayout(link(s,path[3])).routes.land.operational,true);
 });
 test('all A–K knowledge paths can submit with unbuilt or crowded plans and legacy layouts survive',()=>{
  for(const point of 'ABCDEFGHIJK'){

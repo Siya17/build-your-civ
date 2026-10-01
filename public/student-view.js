@@ -7,6 +7,8 @@ import { sceneMarkup, portraitMarkup, cardIcon } from './rpg.js';
 import { landMarkup, tileInfo, movingInfo, buildingList, landSummary } from './hexmap.js';
 import { councilPrompt, seasonText, fill } from './prompts.js';
 import { layoutReport } from '../shared/layout-report.js';
+import { buildingRole } from '../shared/layout.js';
+import { f, ff } from '../shared/flow-copy.js';
 
 const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localized=(value,lang)=>value?.[lang]??'';
@@ -86,20 +88,21 @@ export function cardStatus(item,kind,state){
   return {chosen,gate,available,full,open:!chosen&&gate&&available&&!full};
 }
 // Every card says what it would build and whether the explored land has room for it.
+export const roleTag=(id,lang)=>{const role=buildingRole(id);return `<span class="role-tag role-${role}">${f(lang,'role'+cap(role))}</span>`};
 function buildLine(item,state,lang,L){
   const rule=improvements[item.id];
   if(!rule||!generateLand(state.mapPoint))return '';
-  const tile=state.tiles?.[item.id];
+  const tile=state.tiles?.[item.id],name=`${f(lang,'builds')}: ${safe(rule.name[lang])}`;
   if(state.tech.includes(item.id)||state.civic.includes(item.id)){
-    return `<span class="choice-build placed">${safe(rule.name[lang])} · ${Number.isInteger(tile)?safe(terrains[generateLand(state.mapPoint).tiles[tile]][lang]):L.unplaced}</span>`;
+    return `<span class="choice-build placed">${name} · ${Number.isInteger(tile)?safe(terrains[generateLand(state.mapPoint).tiles[tile]][lang]):f(lang,'planned')}</span>`;
   }
   const n=fitTiles(state,item.id).length;
-  return `<span class="choice-build ${n?'':'none'}">${safe(rule.name[lang])} · ${n?(n===1?L.gbFitOne:fill(L.gbFitCount,{n})):L.gbFitNone}</span>`;
+  return `<span class="choice-build ${n?'':'none'}">${name} · ${n?(n===1?f(lang,'spotOne'):ff(lang,'spots',{n})):f(lang,'spotNone')}</span>`;
 }
-function card(item,kind,state,lang,L,locked,position=''){
+export function card(item,kind,state,lang,L,locked,position=''){
   const {chosen,gate,available,full}=cardStatus(item,kind,state),disabled=locked||(!chosen&&(!gate||!available||full));
   const parentNames=item.parents.map(id=>cardName(kind,id,lang)).join(' / ');
-  return `<button class="choice-card ${chosen?'chosen':''} ${item.gate?'branch-card':''} ${position}" data-pick="${kind}:${item.id}" aria-pressed="${chosen}" ${disabled?'disabled':''}><span class="choice-icon">${cardIcon(item.id)}</span><strong>${localized(item,lang)}</strong>${buildLine(item,state,lang,L)}<span class="choice-status">${chosen?L.chosen:!gate?L.lockedEvent:!available?`${L.needs}: ${parentNames}`:full?L.limit:item.gate?L.unlocked:L.available}</span><span class="choice-toggle">${chosen?'✓':'+'}</span></button>`;
+  return `<button class="choice-card ${chosen?'chosen':''} ${item.gate?'branch-card':''} ${position}" data-pick="${kind}:${item.id}" aria-pressed="${chosen}" ${disabled?'disabled':''}><span class="choice-icon">${cardIcon(item.id)}</span><strong>${localized(item,lang)}</strong>${buildLine(item,state,lang,L)}<span class="choice-status">${(chosen||gate&&available)&&improvements[item.id]&&generateLand(state.mapPoint)?roleTag(item.id,lang):''}${chosen?L.chosen:!gate?L.lockedEvent:!available?`${L.needs}: ${parentNames}`:full?L.limit:item.gate?L.unlocked:L.available}</span><span class="choice-toggle">${chosen?'✓':'+'}</span></button>`;
 }
 
 // The flowchart laid out as a Civ-style tree: one column per tier, each card placed near the
@@ -179,6 +182,11 @@ export function footMarkup(team,lang,L,ui){
   return `<div class="land-info" id="land-info" aria-live="polite">${ui.selected?movingInfo(ui.selected,lang,L):tileInfo(state,lang,L,ui.hover??null)}</div><div class="land-buildings" id="land-buildings"><span class="land-label">${L.buildingsTitle}</span>${buildingList(state,lang,L,{selected:ui.selected,locked:!!team.submittedAt})}</div>`;
 }
 
+// Each decision opens one special card; say which, and what it builds, before the team chooses.
+function unlockLine(kind,choice,lang){
+  const item=trees[kind].find(x=>x.gate?.[1]===choice);
+  return item?`<span class="decision-detail decision-unlock"><b>${f(lang,'unlocks')}</b>${safe(localized(item,lang))} (${f(lang,kind==='tech'?'technologyCard':'societyCard')} · ${safe(improvements[item.id]?.name[lang]||'')})</span>`:'';
+}
 // Event cards arrive over the map. After a decision the card turns over to show what it
 // changed on the land and the development it opened, which can be taken straight away.
 export function eventCard(id,team,lang,L,ui){
@@ -189,7 +197,7 @@ export function eventCard(id,team,lang,L,ui){
   }
   const options=first?['steward','explore']:state.events?.origin==='steward'?['share','reserve']:['exchange','guard'];
   const heading=first?(seasonText(state,L)||L.originPrompt):state.events?.origin==='steward'?L.encounterStewardPrompt:L.encounterExplorePrompt;
-  return `<div class="event-card" role="dialog" aria-labelledby="event-title"><span class="eyebrow">${first?L.origin:L.encounter}</span><h2 id="event-title">${heading}</h2>${first?`<p class="event-sub">${L.originPrompt}</p>`:''}${!eligible?`<p class="event-help">${first?L.firstAnswer:L.firstTechnology}</p>`:''}<div class="event-options">${options.map(choice=>`<button class="event-option ${current===choice?'selected':''}" data-event="${id}:${choice}" aria-pressed="${current===choice}" ${!eligible||locked?'disabled':''}><span class="event-option-title">${L[choice+'Choice']}<b aria-hidden="true">${current===choice?'✓':'↗'}</b></span><span class="decision-detail"><b>${L.benefit}</b>${localized(outcomes[choice].benefit,lang)}</span><span class="decision-detail"><b>${L.tradeoffLabel}</b>${localized(outcomes[choice].tradeoff,lang)}</span></button>`).join('')}</div><button class="event-later" data-action="close-overlay">${current?L.gbContinue:L.gbLater}</button></div>`;
+  return `<div class="event-card" role="dialog" aria-labelledby="event-title"><span class="eyebrow">${first?L.origin:L.encounter}</span><h2 id="event-title">${heading}</h2>${first?`<p class="event-sub">${L.originPrompt}</p>`:''}${!eligible?`<p class="event-help">${first?L.firstAnswer:L.firstTechnology}</p>`:''}<div class="event-options">${options.map(choice=>`<button class="event-option ${current===choice?'selected':''}" data-event="${id}:${choice}" aria-pressed="${current===choice}" ${!eligible||locked?'disabled':''}><span class="event-option-title">${L[choice+'Choice']}<b aria-hidden="true">${current===choice?'✓':'↗'}</b></span><span class="decision-detail"><b>${L.benefit}</b>${localized(outcomes[choice].benefit,lang)}</span><span class="decision-detail"><b>${L.tradeoffLabel}</b>${localized(outcomes[choice].tradeoff,lang)}</span>${unlockLine(kind,choice,lang)}</button>`).join('')}</div><button class="event-later" data-action="close-overlay">${current?L.gbContinue:L.gbLater}</button></div>`;
 }
 export function overlayMarkup(team,lang,L,ui,playing){
   const state=team.state,location=locations[state.mapPoint];

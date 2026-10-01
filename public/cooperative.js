@@ -23,7 +23,7 @@ function render(){
   const oldInput=root.querySelector('input[name="code"]')?.value;
   const oldRole=root.querySelector('input[name="playerId"]:checked')?.value;
   const panelScrolls=['.production-panel','.council-panel'].map(selector=>[selector,root.querySelector(selector)?.scrollTop??0]);
-  document.documentElement.lang=ui.lang;
+  document.documentElement.lang=ui.lang;document.querySelector('.skip').textContent=f(ui.lang,'skipMap');
   root.innerHTML=gameMarkup(world,ui);
   root.setAttribute('aria-busy',String(ui.busy));
   if(ui.busy)for(const button of root.querySelectorAll('button'))button.disabled=true;
@@ -55,9 +55,10 @@ function adopt(data){
     const player=data.state.players[data.playerId];
     if((data.state.phase!=='planning'||player.ready||!player.actionsLeft)&&ui.arm){ui.arm=null;toast(f(ui.lang,'expired'));}
     if(data.state.phase!=='planning'||player.ready||!player.actionsLeft){if(['moves','explore','build','routes','research','research-confirm','trade','deliver','supplies'].includes(ui.modal)){ui.modal=null;toast(f(ui.lang,'expired'));}}
-    if(data.state.clock.round!==previous.state.clock.round)ui.seasonPending=true;
+    if(data.state.log.filter(e=>e.type==='harvest').length>previous.state.log.filter(e=>e.type==='harvest').length)ui.seasonPending=true;
   }
   world=data;
+  if(ui.modal==='waiting'&&(!world.state.players[world.playerId].ready||world.state.phase!=='planning'))ui.modal=null;
   if(!world.state.board[ui.selected]||ui.selected===null)ui.selected=world.state.players[world.playerId].settlement;
   preference('civ_active',world.playerId);
 }
@@ -94,7 +95,6 @@ async function send(action){
   }
   if(action.type==='vote'&&world.role==='host'&&world.state.phase==='assembly')ui.handover=Object.keys(world.state.players).find(id=>!world.state.assembly.votes[id])||null;
   if(ui.handover===actor)ui.handover=null;
-  if(world.state.phase==='assembly'&&ui.handover)ui.modal='handover';
   render();focusModal();
 }
 function confirmRevision(){
@@ -164,7 +164,7 @@ root.addEventListener('click',async event=>{
     else if(cmd==='confirm-research'){if(!confirmRevision())return;ui.busy=true;render();await send({type:'research',researchId:ui.discovery});}
     else if(cmd==='delivery-review'){ui.deliveryStep='review';ui.reviewRevision=world.state.revision;render();focusModal();}
     else if(cmd==='cargo-back'){ui.deliveryStep='cargo';render();}
-    else if(cmd==='result-next'){ui.modal=ui.handover?'handover':ui.seasonPending?'season':null;if(ui.modal==='season')ui.seasonPending=false;render();}
+    else if(cmd==='result-next'){ui.modal=ui.handover?'handover':ui.seasonPending?'season':world.state.players[world.playerId].ready&&world.state.phase==='planning'?'waiting':null;if(ui.modal==='season')ui.seasonPending=false;render();}
     else if(cmd==='handover-next'){const next=ui.handover;ui.handover=null;if(next){ui.busy=true;await switchPlayer(next);}ui.modal=ui.seasonPending?'season':null;ui.seasonPending=false;render();}
     else if(cmd==='season-next'){ui.modal=null;render();}
     else if(cmd==='zoom-in')zoom(.82);
@@ -197,7 +197,7 @@ root.addEventListener('keydown',event=>{
     event.preventDefault();
     const here=world.state.board[tile.dataset.mapTile],directions={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
     const [q,r]=directions[event.key],next=adjacentTiles(world.state.board,here.id).find(other=>other.q===here.q+q&&other.r===here.r+r);
-    if(next)root.querySelector(`[data-map-tile="${CSS.escape(next.id)}"]`)?.focus();
+    const target=next&&root.querySelector(`[data-map-tile="${CSS.escape(next.id)}"]`);if(target){tile.setAttribute('tabindex','-1');target.setAttribute('tabindex','0');target.focus();}
   }
 });
 

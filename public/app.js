@@ -1,6 +1,6 @@
 import { trees, textFields, normalizeCode, isCodeShape, questStatus, applyAction, mapPoints } from '/shared/game.js';
 import { dictionary } from '/shared/i18n.js';
-import { hexes, isRevealed, improvements, terrains, generateLand } from '/shared/land.js';
+import { hexes, neighbours, isRevealed, improvements, terrains, generateLand } from '/shared/land.js';
 import { renderStudentView, renderSummaryRows, renderSubmissionBox, renderQuestLog, eraTrackMarkup, councilMarkup, toolbarMarkup, stageMarkup, overlayMarkup, footMarkup, sideMarkup, drawerMarkup, cardStatus, pendingEvent } from '/student-view.js';
 import { landMarkup, tileInfo } from '/hexmap.js';
 import { councilPrompt, fill } from '/prompts.js';
@@ -24,7 +24,7 @@ let serverTeam=null,pending=[],actionQueue=Promise.resolve();
 // Page-only state for the board: the building being moved, the hex being read, the card
 // shown over the map (arrival scene, atlas or an event), whether an event card is showing
 // its result, the open tree drawer, and which one-time cards this student has already seen.
-const ui={selected:null,hover:null,overlay:null,result:null,drawer:null,seen:new Set(),task:'hub',building:null,pick:null,site:null,path:[],trailMode:'add',busy:false,eventResult:null};
+const ui={selected:null,hover:null,overlay:null,result:null,drawer:null,seen:new Set(),task:'hub',building:null,pick:null,site:null,path:[],pathTarget:null,trailMode:'add',busy:false,eventResult:null,returnTo:null};
 const answerDrafts=new Map(),savingFields=new Map();
 let shownKey='';
 // A revealed join code exists nowhere else: the server keeps only its hash. Losing it to a
@@ -101,7 +101,7 @@ function patchFields(held){
     if(el.value!==next)el.value=next;
   }
 }
-function updateSync(){const el=document.querySelector('#sync');if(el)el.textContent=sync==='offline'?L().reconnecting:sync==='saving'?L().saving:L().save}
+function updateSync(){for(const el of document.querySelectorAll('#sync,[data-sync]'))el.textContent=sync==='offline'?L().reconnecting:sync==='saving'?L().saving:L().save}
 function updateLiveBits(){const el=document.querySelector('#roster');if(el)el.innerHTML=roster.map(n=>`<span>${esc(n)}</span>`).join('');updateSync()}
 function updatePresence(){
   for(const el of document.querySelectorAll('[data-presence]')){
@@ -190,7 +190,7 @@ function render(options={}){
     if(options.stageChange){const main=document.querySelector('#main');if(main&&main.getBoundingClientRect().top<0)main.scrollIntoView({block:'start'})}
     celebrate(options.prev);
   };
-  if(options.stageChange&&canViewTransition())document.startViewTransition(swap);
+  if(options.stageChange&&canViewTransition()&&session?.role!=='student')document.startViewTransition(swap);
   else swap();
 }
 function patchStudent(){
@@ -249,7 +249,7 @@ function celebrate(prev){
 }
 const preloaded=new Set();
 function preload(point){
-  for(const src of [`/assets/lands/${point}.webp`,`/assets/portraits/${point}.webp`]){
+  for(const src of [`/assets/lands/${point}.webp`,`/assets/portraits/${point}.webp?v=ancient-1`]){
     if(preloaded.has(src))continue;
     preloaded.add(src);const img=new Image();img.decoding='async';img.src=src;
   }
@@ -352,7 +352,7 @@ function action(payload){
       if(JSON.stringify(shown.state)!==JSON.stringify(team.state))render({prev:shown.state,stageChange:team.state.stage!==shown.state.stage});
     }catch(error){
       pending.splice(pending.indexOf(payload),1);
-      if(error.team){adoptTeam(error.team);ui.reviewVersion=null;}
+      if(error.team){adoptTeam(error.team);ui.reviewVersion=null;error.message=f(lang,'updated');}
       const shown=team;team=projected();
       sync='saved';updateSync();toast(error.message,'error');
       if(JSON.stringify(shown.state)!==JSON.stringify(team.state))render({stageChange:team.state.stage!==shown.state.stage});
@@ -370,7 +370,7 @@ function saveField(key,value){
       if(answerDrafts.get(key)===value)answerDrafts.delete(key);
       sync=answerDrafts.size?'saving':'saved';updateSync();
       if(!ui.busy&&ui.task==='hub')render({full:true});
-    }catch(error){sync='offline';updateSync();toast(f(lang,'saveFailed'),'error');throw error;}
+    }catch(error){sync='offline';updateSync();toast(f(lang,'saveFailed'),'error');throw new Error(f(lang,'saveFailed'),{cause:error});}
   });
   savingFields.set(key,request);
   request.finally(()=>{if(savingFields.get(key)===request)savingFields.delete(key);}).catch(()=>{});
@@ -454,12 +454,13 @@ function chooseEvent(id,choice){
 }
 
 async function navigateTask(task){
-  await flushAll();ui.task=task;ui.eventResult=null;ui.selected=null;ui.overlay=null;ui.drawer=null;
+  await flushAll();ui.task=task;ui.eventResult=null;ui.selected=null;ui.overlay=null;ui.drawer=null;ui.returnTo=null;
   render({full:true,stageChange:true});document.querySelector('#task-title')?.focus({preventScroll:true});
 }
-async function advanceChapter(){const stage=progressStage(team.state);if(stage>team.state.stage)await action({type:'stage',stage});}
-function beginPlacement(id,pick=null){
-  ui.building=id;ui.pick=pick;let preview=team.state;
+async function advanceChapter(){if(team.submittedAt)return;const stage=progressStage(team.state);if(stage>team.state.stage)await action({type:'stage',stage});}
+// returnTo is the card tree the placement started from, so the result can lead back to it.
+function beginPlacement(id,pick=null,returnTo=null){
+  ui.building=id;ui.pick=pick;ui.returnTo=returnTo;let preview=team.state;
   if(pick)preview=applyAction(preview,{type:'pick',tree:pick.tree,id,tile:null});
   ui.site=Number.isInteger(preview.tiles?.[id])?preview.tiles[id]:suggestedSite(preview,id);
   ui.task='placement';ui.reviewVersion=team.version;
@@ -474,14 +475,14 @@ function guidedClick(el){
       if(d.tile!==undefined){
         const tile=Number(d.tile);
         if(ui.task==='placement'){ui.site=tile;ui.reviewVersion=team.version;}
-        else if(ui.task==='trail'){ui.path=suggestTrail(team.state,tile)||[];ui.trailMode='add';ui.reviewVersion=team.version;}
+        else if(ui.task==='trail'){ui.pathTarget=tile;ui.path=suggestTrail(team.state,tile)||[];ui.trailMode='add';ui.reviewVersion=team.version;}
         else{ui.hover=tile;await navigateTask('assessment');}
       }else if(d.building){
         if(team.submittedAt)return;
-        if(ui.task==='trail'){ui.path=suggestTrail(team.state,team.state.tiles[d.building])||[];ui.reviewVersion=team.version;}
+        if(ui.task==='trail'){ui.pathTarget=team.state.tiles[d.building];ui.path=suggestTrail(team.state,ui.pathTarget)||[];ui.trailMode='add';ui.reviewVersion=team.version;}
         else beginPlacement(d.building);
       }else if(d.pick){
-        await flushAll();const [tree,id]=d.pick.split(':');beginPlacement(id,team.state[tree].includes(id)?null:{tree,id});
+        await flushAll();const [tree,id]=d.pick.split(':');beginPlacement(id,team.state[tree].includes(id)?null:{tree,id},tree);
       }else if(d.map){
         ui.busy=true;await flushAll();await action({type:'map',point:d.map});ui.task='arrival';
       }else if(d.event){
@@ -505,11 +506,11 @@ function guidedClick(el){
           if(['prep','services','routeCheck'].includes(task))ui.seen.add(task);
           if(task==='route'&&!team.state.route)throw new Error(f(lang,'route'));
           await advanceChapter();ui.task='hub';
-        }else if(cmd==='placement-back')await navigateTask(ui.pick?.tree||'manage');
+        }else if(cmd==='placement-back')await navigateTask(ui.returnTo||ui.pick?.tree||'manage');
         else if(cmd==='confirm-placement'||cmd==='keep-plan'){
-          if(ui.reviewVersion!==team.version&&cmd==='confirm-placement'){ui.reviewVersion=team.version;throw new Error(f(lang,'updated'));}
+          if(ui.reviewVersion!==team.version){ui.reviewVersion=team.version;throw new Error(f(lang,'updated'));}
           ui.busy=true;await flushAll();
-          const payload=ui.pick?{type:'pick',...ui.pick,tile:cmd==='keep-plan'?null:ui.site}:{type:'place',id:ui.building,tile:ui.site};
+          const payload=cmd==='keep-plan'?{type:'pick',tree:ui.pick?.tree||(team.state.tech.includes(ui.building)?'tech':'civic'),id:ui.building,tile:null}:ui.pick?{type:'pick',...ui.pick,tile:ui.site}:{type:'place',id:ui.building,tile:ui.site};
           await action(payload);ui.task='result';ui.eventResult=null;ui.pick=null;
         }else if(cmd==='remove-development'){
           ui.busy=true;await flushAll();const tree=team.state.tech.includes(ui.building)?'tech':'civic';
@@ -517,12 +518,12 @@ function guidedClick(el){
         }else if(cmd.startsWith('move:')){await flushAll();beginPlacement(cmd.slice(5));}
         else if(cmd==='manage')await navigateTask('manage');
         else if(cmd==='trails'||cmd.startsWith('connect:')){
-          await flushAll();ui.task='trail';ui.trailMode='add';ui.path=cmd.startsWith('connect:')?suggestTrail(team.state,team.state.tiles[cmd.slice(8)])||[]:[];ui.reviewVersion=team.version;
-        }else if(cmd.startsWith('remove-edge:')){ui.path=cmd.slice(12).split(':').map(Number);ui.trailMode='remove';ui.reviewVersion=team.version;}
+          await flushAll();ui.task='trail';ui.trailMode='add';ui.returnTo=null;ui.pathTarget=cmd.startsWith('connect:')?team.state.tiles[cmd.slice(8)]:null;ui.path=ui.pathTarget!=null?suggestTrail(team.state,ui.pathTarget)||[]:[];ui.reviewVersion=team.version;
+        }else if(cmd.startsWith('remove-edge:')){ui.path=cmd.slice(12).split(':').map(Number);ui.pathTarget=ui.path[1];ui.trailMode='remove';ui.reviewVersion=team.version;}
         else if(cmd==='confirm-trail'){
           if(ui.reviewVersion!==team.version){ui.reviewVersion=team.version;throw new Error(f(lang,'updated'));}
           const error=trailError(team.state,ui.path,ui.trailMode==='remove');if(error)throw new Error(error);
-          ui.busy=true;await flushAll();await action({type:'trail',path:ui.path,mode:ui.trailMode});ui.task='result';ui.eventResult=null;
+          ui.busy=true;await flushAll();await action({type:'trail',path:ui.path,mode:ui.trailMode});ui.task='result';ui.eventResult=null;ui.returnTo=null;ui.building=null;
         }
       }
     }catch(error){toast(error.message,'error');}
@@ -567,6 +568,11 @@ app.addEventListener('submit',event=>{
 });
 app.addEventListener('input',event=>{
   const el=event.target;
+  if(el instanceof SVGElement&&el.dataset.tile!==undefined&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){
+    event.preventDefault();const here=hexes[Number(el.dataset.tile)],directions={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]},[q,r]=directions[event.key];
+    const next=neighbours[Number(el.dataset.tile)].find(i=>hexes[i].q===here.q+q&&hexes[i].r===here.r+r&&isRevealed(team.state,i));
+    const target=document.querySelector(`[data-tile="${next}"]`);if(target){el.setAttribute('tabindex','-1');target.setAttribute('tabindex','0');target.focus();}return;
+  }
   if(el.dataset?.field!==undefined)fieldInput(el);
   else if(el.classList?.contains('code-input')){const cleaned=el.value.toUpperCase().replace(/[^A-Z0-9 -]/g,'').slice(0,16);if(el.value!==cleaned)el.value=cleaned}
 });

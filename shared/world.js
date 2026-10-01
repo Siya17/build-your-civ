@@ -14,8 +14,8 @@ export const locations = {
   K:{region:{en:'Greenland and Arctic coast',ja:'グリーンランドと北極圏の海岸'},scene:'ice',facts:{en:['A vast ice sheet covers much of Greenland.','Coastal areas include fjords and steep changes in elevation.','Consider how ice and sea routes affect travel.'],ja:['グリーンランドの大部分を広大な氷床が覆います。','沿岸にはフィヨルドと急な高低差があります。','氷と海路が移動にどう影響するか考えよう。']},source:'https://science.nasa.gov/earth/earth-observatory/topography-of-greenland-5118/'}
 };
 
-// One shared fictional representative per map point. These are evocative portraits,
-// not reconstructions of a named culture or evidence about historical populations.
+// Fictional people around 3000 BCE in rough hide or plant-fiber wraps. These
+// interpretations do not identify a named culture or historical population.
 export const characters = {
   A:{en:'Forest community',ja:'森の共同体'},B:{en:'Coastal community',ja:'海岸の共同体'},
   C:{en:'Highland community',ja:'高地の共同体'},D:{en:'Desert community',ja:'砂漠の共同体'},

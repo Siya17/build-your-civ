@@ -137,7 +137,10 @@ export function applyAction(previous, action) {
     const item = items.find(x => x.id === action.id);
     if (!item) throw new Error('Invalid development');
     const selected = new Set(state[action.tree]);
-    if (selected.has(item.id)) {
+    if(selected.has(item.id)&&Object.hasOwn(action,'tile')){
+      if(action.tile===null){delete state.tiles[item.id];state.plannedBuildings.push(item.id);}
+      else{const error=placeError(state,item.id,action.tile);if(error)throw new Error(error);state.tiles[item.id]=action.tile;state.plannedBuildings=state.plannedBuildings.filter(id=>id!==item.id);}
+    } else if (selected.has(item.id)) {
       selected.delete(item.id);
       let changed = true;
       while (changed) {

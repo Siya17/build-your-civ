@@ -4,6 +4,8 @@ import { civilizationRoutes, routeEligibility } from './routes.js';
 export const FOOD = ['husbandry','irrigation','archery'];
 export const STORAGE = ['pottery','preservation','mutual_aid'];
 export const VENUES = ['laws','craft','workforce','philosophy','games','history','poetry','mysticism','theology','resource_council'];
+// What a building does on the map: feeds people, protects food, serves neighbors, or none of these.
+export const buildingRole = id => FOOD.includes(id)?'food':STORAGE.includes(id)?'storage':VENUES.includes(id)?'service':'facility';
 const water = new Set(['river','wetland','coast']);
 export const edgeKey = (a,b) => a<b?`${a}:${b}`:`${b}:${a}`;
 const dock = (state,i) => ['sailing','shipbuilding'].some(id=>state.tiles?.[id]===i);
@@ -63,7 +65,7 @@ export function assessLayout(state) {
     const connected=reachable.has(tile),coverage=connected&&(STORAGE.includes(id)||VENUES.includes(id))?[tile,...neighbours[tile]]:[];
     const around=[land.tiles[tile],...neighbours[tile].map(i=>land.tiles[i])];
     const exposed=FOOD.includes(id)&&(hazard==='flood'?['river','wetland'].includes(land.tiles[tile]):hazard==='drought'?!around.some(t=>['river','wetland'].includes(t)):hazard==='storm'?around.includes('coast'):hazard==='frost'?['mountain','ice'].includes(land.tiles[tile])||around.includes('ice'):false);
-    buildings[id]={tile,connected,coverage,exposed,buffered:false,served:false,role:FOOD.includes(id)?'food':STORAGE.includes(id)?'storage':VENUES.includes(id)?'service':'facility'};
+    buildings[id]={tile,connected,coverage,exposed,buffered:false,served:false,role:buildingRole(id)};
   }
   const sources=FOOD.filter(id=>buildings[id]?.connected),stores=STORAGE.filter(id=>buildings[id]?.connected),venues=VENUES.filter(id=>buildings[id]?.connected);
   const covered=new Set(venues.flatMap(id=>buildings[id].coverage));
@@ -80,7 +82,7 @@ export function assessLayout(state) {
         const start=buildings.sailing?.connected?buildings.sailing.tile:null,seen=new Set(),queue=start===null?[]:[start];
         while(queue.length){const i=queue.shift();if(seen.has(i)||!isRevealed(state,i)||!water.has(land.tiles[i]))continue;seen.add(i);queue.push(...neighbours[i]);}
         if(![...seen].some(i=>hexes[i].dist===3))missing.push('waterEdge');
-      } else if(![...reachable].some(i=>hexes[i].dist===3&&landTile(state,i)))missing.push('landEdge');
+      } else if(!normalizeTrails(state).some(([a,b])=>(!trailError(state,[a,b])||!trailError(state,[b,a]))&&[a,b].some(i=>reachable.has(i)&&hexes[i].dist===3&&landTile(state,i))))missing.push('landEdge');
     }
     routes[route.id]={operational:missing.length===0,missing};
   }

@@ -5,6 +5,7 @@ import { gameMarkup, placementError, deliveryPreview, placementProduction } from
 import { copy } from '../public/cooperative-copy.js';
 import { resources } from '../shared/strategy/resources.js';
 import { harvestForecast } from '../shared/strategy/hex.js';
+import { reserveRoute } from '../shared/strategy/logistics.js';
 
 const ui={lang:'en',selected:'-2,0',arm:null,cargo:resources(),modal:null,busy:false,connection:'saved'};
 test('the cooperative UI has complete English and Japanese copy',()=>{
@@ -58,4 +59,14 @@ test('placement harvest previews include neighboring production and agree with a
   assert(preview.after.yield.materials>preview.before.yield.materials);
   assert.equal(preview.after.impact-preview.before.impact,3);
  }
+});
+
+test('delivery preview identifies exhausted physical route segments',()=>{
+ const state=createSession(),path=['-2,0','-1,0','0,0','1,0','2,0'];
+ for(const id of path){state.board[id].exploredBy=['highland','river'];if(state.board[id].structure!=='settlement')state.board[id].infrastructure=state.board[id].terrain==='river'?'bridge':'road';}
+ state.logistics.edgeUsage={'-1,0|0,0':4};
+ const world={role:'host',playerId:'highland',state:sessionView(state,'highland')},preview=deliveryPreview(world,{modal:'trade',cargo:resources({materials:2})},'en');
+ assert(preview.error);assert.deepEqual(preview.path,path);assert.equal(preview.bottlenecks[0].remaining,0);
+ assert.throws(()=>reserveRoute(state.board,state.logistics.edgeUsage,path,path[0],path.at(-1),{materials:2},'highland',1),/capacity/);
+ const html=gameMarkup(world,{...ui,modal:'trade',deliveryStep:'review',cargo:resources({materials:2})});assert(html.includes('delivery-bottleneck'));assert.match(html,/data-cmd="send" disabled/);
 });

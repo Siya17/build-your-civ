@@ -3,6 +3,9 @@
 import { trees } from '../shared/game.js';
 import { locations } from '../shared/world.js';
 import { generateLand, improvements, terrains, hazardOf, center } from '../shared/land.js';
+import { assessLayout } from '../shared/layout.js';
+import { f, ff } from '../shared/flow-copy.js';
+import { routeById } from '../shared/routes.js';
 
 export const fill=(template,values)=>String(template).replace(/\{(\w+)\}/g,(_,key)=>values[key]??'');
 const hazardKeys={flood:'Flood',drought:'Drought',storm:'Storm',frost:'Frost'};
@@ -27,7 +30,7 @@ function landWords(state,lang){
 const belief=['mysticism','theology','poetry','history','games','tradition'];
 
 // Returns the question and a sentence starter for one answer field.
-export function councilPrompt(key,state,lang,L){
+function baseCouncilPrompt(key,state,lang,L){
   const fallback={q:L[key],starter:L[key+'Ph']};
   const place=locations[state.mapPoint]?.region[lang],hazard=hazardPhrase(state,L);
   if(key==='placeAnswer'){
@@ -59,4 +62,16 @@ export function councilPrompt(key,state,lang,L){
     return {q:fill(L.prContact,{choice:name}),starter:fill(L.stContact,{choice:name})};
   }
   return fallback;
+}
+
+export function councilPrompt(key,state,lang,L){
+  const prompt=baseCouncilPrompt(key,state,lang,L),a=assessLayout(state),add=text=>{prompt.q+=(lang==='ja'?'':' ')+text};
+  const quote=text=>lang==='en'?text.toLowerCase():text;
+  if(key==='techAnswer')add(ff(lang,'promptTech',{food:quote(f(lang,a.food.status)),season:quote(f(lang,a.season.status))}));
+  if(key==='societyAnswer')add(f(lang,'promptSociety'));
+  if(key==='contactAnswer'){
+    const route=routeById(state.route||'local');
+    add(route.id==='local'?f(lang,'promptContactLocal'):ff(lang,'promptContact',{route:route[lang],status:quote(f(lang,a.routes[route.id]?.operational?'operational':'routePlanned'))}));
+  }
+  return prompt;
 }

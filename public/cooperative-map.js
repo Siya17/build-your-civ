@@ -33,14 +33,14 @@ function buildingArt(tile,work) {
   return `<g class="map-building ${faction}"><ellipse class="building-shadow" rx="26" ry="9" cy="19"/>${art}</g>`;
 }
 
-export function mapMarkup(state, lang, {selected=null, valid=new Set(), path=[], miniature=false}={}) {
+export function mapMarkup(state, lang, {selected=null, valid=new Set(), path=[], bottlenecks=[], miniature=false}={}) {
   const tiles=Object.values(state.board), seen=tile=>tile&&!tile.fogged;
   const at=id=>position(state.board[id]).map(v=>v.toFixed(1));
   const cells=tiles.map(tile=>{
     const [x,y]=position(tile),cls=tile.fogged?'fog':tile.terrain;
     const target=valid.has(tile.id);
     const name=tile.fogged?label(lang,'unexplored'):label(lang,tile.terrain==='river'?'riverTerrain':tile.terrain);
-    return `<g class="map-cell terrain-${cls} ${tile.owner?'owner-'+tile.owner:''} ${selected===tile.id?'selected':''} ${target?'valid':''} ${tile.disabledUntil>=state.clock.round?'flooded':''}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})" ${miniature?'':`data-map-tile="${safe(tile.id)}" role="button" tabindex="0" aria-label="${safe(name+' · '+tile.id)}" aria-pressed="${selected===tile.id}"`}><polygon class="tile-depth" points="${HEX}" transform="translate(0 6)"/><polygon class="tile-top" points="${HEX}"/><polygon class="tile-edge" points="${INNER}"/>${terrainArt(tile)}${tile.node?.kind==='natural-wonder'?'<path class="wonder-mark" d="M-14 12-5-11 0-5 7-20 19 12z"/>':''}${target?'<circle class="placement-dot" r="6"/>':''}</g>`;
+    return `<g class="map-cell terrain-${cls} ${tile.owner?'owner-'+tile.owner:''} ${selected===tile.id?'selected':''} ${target?'valid':''} ${tile.disabledUntil>=state.clock.round?'flooded':''}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})" ${miniature?'':`data-map-tile="${safe(tile.id)}" role="button" tabindex="${selected===tile.id?0:-1}" aria-label="${safe(name+' · '+tile.id)}" aria-pressed="${selected===tile.id}"`}><polygon class="tile-depth" points="${HEX}" transform="translate(0 6)"/><polygon class="tile-top" points="${HEX}"/><polygon class="tile-edge" points="${INNER}"/>${terrainArt(tile)}${tile.node?.kind==='natural-wonder'?'<path class="wonder-mark" d="M-14 12-5-11 0-5 7-20 19 12z"/>':''}${target?'<circle class="placement-dot" r="6"/>':''}</g>`;
   }).join('');
   const riverTiles=tiles.filter(tile=>seen(tile)&&tile.terrain==='river').sort((a,b)=>a.r-b.r);
   const water=riverTiles.map(tile=>{
@@ -66,5 +66,6 @@ export function mapMarkup(state, lang, {selected=null, valid=new Set(), path=[],
   }).join('');
   const workTile=state.board[state.work.site],workLabel=seen(workTile)?`<g class="work-label" transform="translate(${position(workTile)[0].toFixed(1)} ${(position(workTile)[1]-60).toFixed(1)})"><text text-anchor="middle">${safe(label(lang,'work'))}</text></g>`:'';
   const travel=path.length?`<path class="delivery-path" d="M${path.map(id=>at(id).join(' ')).join('L')}"/>`:'';
-  return `<svg class="world-svg ${miniature?'miniature':''}" ${miniature?'':'id="world-map" tabindex="-1"'} viewBox="-390 -327 780 654" role="group" aria-label="${safe(label(lang,'era'))}"><defs><radialGradient id="world-glow"><stop offset="0" stop-color="#679183" stop-opacity=".16"/><stop offset="1" stop-color="#102b33" stop-opacity="0"/></radialGradient></defs><ellipse class="map-glow" fill="url(#world-glow)" rx="380" ry="290" cy="15"/><g class="map-terrain">${cells}</g><g class="map-water">${water}</g><g class="map-roads">${routes.join('')}</g><g class="map-art" aria-hidden="true">${buildings}</g>${travel}<g class="map-labels" aria-hidden="true">${labels}${workLabel}</g><g class="compass" transform="translate(316 -254)" aria-hidden="true"><circle r="26"/><path d="M0-19 5 0 0 19-5 0zM-19 0 0-5 19 0 0 5z"/><text y="-35" text-anchor="middle">N</text></g></svg>`;
+  const blocked=bottlenecks.map(({from,to})=>`<path class="delivery-bottleneck" d="M${at(from).join(' ')}L${at(to).join(' ')}"/>`).join('');
+  return `<svg class="world-svg ${miniature?'miniature':''}" ${miniature?'':'id="world-map" tabindex="-1"'} viewBox="-390 -327 780 654" role="group" aria-label="${safe(label(lang,'era'))}"><defs><radialGradient id="world-glow"><stop offset="0" stop-color="#679183" stop-opacity=".16"/><stop offset="1" stop-color="#102b33" stop-opacity="0"/></radialGradient></defs><ellipse class="map-glow" fill="url(#world-glow)" rx="380" ry="290" cy="15"/><g class="map-terrain">${cells}</g><g class="map-water">${water}</g><g class="map-roads">${routes.join('')}</g><g class="map-art" aria-hidden="true">${buildings}</g>${travel}${blocked}<g class="map-labels" aria-hidden="true">${labels}${workLabel}</g><g class="compass" transform="translate(316 -254)" aria-hidden="true"><circle r="26"/><path d="M0-19 5 0 0 19-5 0zM-19 0 0-5 19 0 0 5z"/><text y="-35" text-anchor="middle">N</text></g></svg>`;
 }

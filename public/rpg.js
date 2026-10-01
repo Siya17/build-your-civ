@@ -6,7 +6,7 @@ export function sceneMarkup(point,alt,playing=true){
   return `<div class="cinematic ${playing&&key?'playing':'still'}" data-scene="${key||'world'}"><img class="scene-photo" data-scene-image src="${key?`/assets/lands/${key}.webp`:'/assets/world-hero.webp'}" alt="${safe(alt)}" decoding="async" /></div>`;
 }
 export function portraitMarkup(point,alt=''){
-  return `<img class="portrait" src="/assets/portraits/${pointKey(point)||'guide'}.webp" alt="${safe(alt)}" decoding="async" />`;
+  return `<img class="portrait" src="/assets/portraits/${pointKey(point)||'guide'}.webp?v=ancient-1" alt="${safe(alt)}" decoding="async" />`;
 }
 const icons={
  pottery:'M10 3h12M12 3v6c-8 5-7 17 4 20 11-3 12-15 4-20V3M9 15h14',

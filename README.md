@@ -2,24 +2,36 @@
 
 A bilingual, shared classroom game for the Tama University Week 2 activity. The newer slide deck supplies the A–K map and contact question; the supplied science and civics flowcharts supply the development cards.
 
+## How to play
+
+Each team builds one community at a real place on the Week 2 class map, in four chapters:
+
+1. **Your place.** Meet your homeland, describe it, and decide how to face its hard season (flood, drought, storm or frost).
+2. **Discover technology.** Pick technology cards. Each card becomes a building you place on your land. Then check whether your food is safe and explain your most important tool.
+3. **Shape society.** Decide how to answer a neighboring community, pick society cards, check which buildings your community buildings reach, and explain your society and beliefs.
+4. **Choose your future.** Stay local or open a caravan, water or learning route, explain your connections, then review and submit.
+
+Each story decision unlocks one special card, and each screen names it before you choose. Buildings have one of four roles: food, storage, community or other. A building works when it touches the settlement, another building or a path. The map home always shows one next task and a short "How this game works" guide. There is no score. The teacher receives the five written answers along with a plain-language summary of the map.
+
 ## What it does
 
 - A new classroom starts with eleven teams, Team A to Team K. Each one begins at, and keeps, its own map point. The teacher can delete any team, bring missing letters back with "Add missing teams A–K", and create extra teams, which choose their own place.
 - Each team's join code is its short name and a three-digit PIN, e.g. `A-427` or `RIVERMAKER-315`. Students can type it in any case, with or without the dash. The teacher page shows every code at all times, and "New join code" replaces one. Codes from before this change still work.
 - Students sign in with the team code and their names. No university account integration is required.
-- Each team shares one character, chapter, set of choices, and five short answers. Live events update teammates’ screens.
-- A–K each open a distinct seven-second animated landscape and a bilingual, sourced geography card. Motion can be replayed or stopped.
+- Each team shares one character, chapter, set of choices, and five short answers. Live events update saved progress while each student browses tasks independently.
+- A–K each open a distinct illustrated landscape with a brief reveal and a bilingual, sourced geography card. Reduced motion keeps the landscape still.
 - Four quests and badges guide the team through two branching story events. Event choices unlock special development cards and show a possible benefit and tradeoff.
 - The science and society trees each permit seven choices, with prerequisites checked by the server. They are drawn as connected trees, and the chosen path lights up.
-- Each team has a hex homeland built from its map point: coast, rivers, mountains and deserts follow the geography card. Every chosen card raises a building on a fitting hex. Teams can move buildings, and pointing at a hex explains which buildings suit that land. Exploring outward and travel technologies clear the fog. The settlement grows from village to town to city. There is no score.
-- The default student screen is a guided four-step activity: know your place, discover technology, shape society, choose your future. Each team advances independently. The council holds the current step's objectives and short questions; the map shows its choices. There is no shared turn clock or resource management.
+- The map is the home screen with one next-task button. Introductions, writing, decisions, placement previews, checks, and outcomes each have a focused screen. Back and review preserve writing and do not move teammates. Task transitions take about 250 ms and respect reduced motion.
+- Each development is learned only after confirming a fitting location or explicitly keeping an unbuilt plan. Free moves change connections, storage protection, and community service coverage. Confirmed trails bridge gaps and remain after buildings move. Connected food sources support local access; connected storage buffers exposed production within one hex. Flood, drought, storm, and frost depend on the actual site.
+- The four classroom chapters remain: know your place, discover technology, shape society, choose your future. Map outcomes are qualitative tradeoffs and never block an otherwise complete submission. There is no shared turn clock or resource management.
 - The final step offers local development, a caravan route, a water route, or a learning network. Outward routes unlock only when the team has a matching technology AND civic; each shows its prerequisites and tradeoff. Local development is always a valid finish. The teacher receives the chosen route with the existing answers.
-- Decisions show on the land. The place's hard season (flood, drought, storm or frost) is marked before the first decision. Protecting supplies lights the stores; mapping paths outward draws a route that clears the fog. In step 3 a neighbouring camp appears at the edge. The final route is drawn as a proposed connection.
+- An outward route is separately assessed as planned or operating. Land and learning routes need connected required facilities and an explored land edge reached by paths. Water routes need a connected harbor, a qualifying civic facility, and revealed water to the edge. The student and teacher review include actual map consequences.
 - Council questions and sentence starters are written from the team's own place, buildings, cards and decisions. The five answers the teacher receives are unchanged.
-- Clicks update the page immediately, and the server's answer confirms or rolls back the change. Only the changed parts of the page are redrawn.
+- Saves confirm before continuing. Failed saves keep drafts on the current screen. Placement and trail edits reject stale previews and require another confirmation after refreshing.
 - A complete team can submit once. Submission locks editing until the teacher reopens it.
 - The teacher dashboard shows team progress, rosters, and submitted answers.
-- Text fields block browser paste, copy, cut, and drop. This is a classroom deterrent, not proof that every answer was typed; browser controls can be bypassed.
+- Answer fields block browser paste and drop; copying work out remains available. This is a classroom deterrent, not proof that every answer was typed; browser controls can be bypassed.
 
 ## Run locally
 
@@ -65,4 +77,4 @@ The experimental world data is separate from classroom teams and submissions.
 
 ## Source and asset notes
 
-The A–K world map comes from the supplied current Week 2 slides. Its pins indicate approximate broad areas, not exact historical sites. Each geography card links to the NASA Earth Observatory page supporting its physical-geography clues; those observations describe present-day landscapes, and past conditions could differ. The eleven original SVG motion scenes and four character portraits are stylized illustrations, not reconstructions of specific people or societies. Each scene runs as a seven-second muted CSS animation, with the same SVG as its still poster when motion is stopped or reduced motion is requested. The three older landscape images remain in the sign-in and teacher views. Flowchart paths are discussion prompts and do not claim one universal sequence of history. Where a card has multiple incoming arrows, any one earlier card unlocks it so paths remain possible within seven choices.
+The A–K world map comes from the supplied current Week 2 slides. Its pins indicate approximate broad areas, not exact historical sites. Each geography card links to the NASA Earth Observatory page supporting its physical-geography clues; those observations describe present-day landscapes, and past conditions could differ. The landscape illustrations use brief motion reveals with a still view for reduced motion. All twelve portraits are fictional people living approximately 5,000 years ago, in unadorned handworked hide or coarse undyed plant-fiber clothing, with practical irregular hair and neutral backgrounds. They do not depict a named culture. Built-in imagegen produced each portrait independently; exact prompts and archaeology references are saved in `public/assets/portraits/provenance.json`, and the complete set is shown in `artifacts/portraits-preview.png`. The three older landscape images remain in the sign-in and teacher views. Flowchart paths are discussion prompts and do not claim one universal sequence of history. Where a card has multiple incoming arrows, any one earlier card unlocks it so paths remain possible within seven choices.

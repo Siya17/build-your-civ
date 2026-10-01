@@ -99,6 +99,7 @@ export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false,
   const land=generateLand(state.mapPoint);
   if(!land)return '';
   const seen=i=>isRevealed(state,i),play=mode==='play',tiles=state.tiles||{},assessment=assessLayout(state);
+  const focusTile=Number.isInteger(tiles[selected])?tiles[selected]:hexes.map((hex,i)=>({hex,i})).filter(({i})=>i!==center&&seen(i)).sort((a,b)=>a.hex.dist-b.hex.dist||a.i-b.i)[0]?.i;
   const terrainName=i=>terrains[land.tiles[i]][lang];
   const cells=hexes.map((hex,i)=>!seen(i)
     ?`<g class="hx hx-fog" data-hex="${i}" transform="${move(i)}"><polygon class="hx-base" points="${HEX}"/>${fogGlyph}</g>`
@@ -108,7 +109,7 @@ export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false,
     const other=occupantOf(state,i);
     const target=selected&&(!other||other===selected)&&fits(land,selected,i);
     const cls=selected?(target?'fit':'blocked'):'';
-    return `<polygon class="hx-hit ${cls}" data-tile="${i}" points="${HEX}" transform="${move(i)}"${!locked?` role="button" tabindex="0" aria-label="${safe(`${selected?L.placeHere:L.landTitle}: ${terrainName(i)}`)}"`:''}/>`;
+    return `<polygon class="hx-hit ${cls}" data-tile="${i}" points="${HEX}" transform="${move(i)}"${!locked?` role="button" tabindex="${i===focusTile?0:-1}" aria-label="${safe(`${selected?L.placeHere:L.landTitle}: ${terrainName(i)}`)}"`:''}/>`;
   }).join(''):'';
   const buildings=Object.entries(tiles).map(([id,i])=>{
     const name=improvements[id]?.name[lang]||id,label=`${name} · ${terrainName(i)}`;
