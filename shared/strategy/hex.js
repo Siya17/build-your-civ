@@ -26,6 +26,12 @@ export const CIVILIZATIONS = Object.freeze({
   woodland: { name: 'Woodland Custodians', multipliers: { food: 1, materials: 1, knowledge: 1, culture: 2 }, biome: 'forest' }
 });
 
+export const RESEARCH = Object.freeze({
+  masonry: { cost: { knowledge: 3 }, unlocks: 'workshop' },
+  preservation: { cost: { knowledge: 2 }, unlocks: 'storehouse' },
+  waterways: { cost: { knowledge: 3 }, unlocks: 'canal' }
+});
+
 // Multiplicative bonus is capped: three matches give x1.75, not runaway scaling.
 // A foreign archive/shrine also gives BOTH owners +1 knowledge and +1 culture.
 export function calculateTileYield(board, tileId, civilization, round = 1) {
@@ -60,6 +66,14 @@ export function calculatePlayerYield(board, player, round) {
     impact += result.impact;
   }
   return { yield: amount, impact };
+}
+
+// The same seasonal harvest forecast is used by resolution and placement previews.
+export function harvestForecast(board,player,round,season) {
+  const result=calculatePlayerYield(board,player,round);
+  if(season==='winter')result.yield.food=Math.floor(result.yield.food/2);
+  if(season==='autumn'&&!Object.values(board).some(tile=>tile.owner===player.id&&tile.structure==='storehouse'))result.yield.food=Math.max(0,result.yield.food-1);
+  return {...result,upkeep:season==='winter'?2:1};
 }
 
 export function createBoard(radius = 4) {

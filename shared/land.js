@@ -219,6 +219,7 @@ export function settleTiles(state) {
   }
   for (const id of chosenCards(state)) {
     if (id in tiles) continue;
+    if (state.plannedBuildings?.includes(id)) continue;
     const i = byDistance.find(n => open(id, n));
     if (i !== undefined) { tiles[id] = i; used.add(i); }
   }

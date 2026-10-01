@@ -73,6 +73,7 @@ export const dictionary = {
     submit: "Submit civilization",
     submitConfirm: "Submit and lock your team’s work now?",
     submitted: "Submitted to your teacher",
+    mapEffects: "Map outcomes",
     submitHint: "All required parts must be complete before submission.",
     submittedHint: "Your team’s work is locked. Your teacher can reopen it.",
     missing: "Still needed",
@@ -204,6 +205,7 @@ export const dictionary = {
     submit: "文明を提出",
     submitConfirm: "チームの作品を提出し、編集を終了しますか？",
     submitted: "先生に提出済み",
+    mapEffects: "地図の結果",
     submitHint: "必須項目を入力すると提出できます。",
     submittedHint: "編集は終了しました。先生が再開できます。",
     missing: "残りの項目",
@@ -275,7 +277,7 @@ const rpgText = {
     firstAnswer:'Write your short place answer to make this decision.',firstTechnology:'Make your first decision and choose a technology to continue.',
     choosePath:'Shape your path',cardHint:'Choose up to seven connected cards. Start with the first row.',fromDecision:'Available through your decision',
     aboutLocation:'About this place & artwork',mapAlt:'Classroom world map with locations A to K',
-    portraitNote:'An imagined community representative. The portrait is inspired by the broad region and climate, not a reconstruction of a specific culture or period.',
+    portraitNote:'A fictional person living around 3000 BCE, shown in simple handworked hide or undyed plant-fiber clothing. The character does not represent a named culture.',
     artDescription:'Original landscape illustration',worldArt:'A painted landscape of rivers, mountains and settlements',
     chapterIntros:['Find a place for your people. Let the landscape begin your story.','Decide what your community will learn to make.','Decide how people will live and work together.','Every choice becomes part of your shared history.'],
     placeAnswer:'What helps or challenges people here?', placeAnswerPh:'A river could help us travel, but flooding could be difficult.',
@@ -350,7 +352,7 @@ const rpgText = {
     firstAnswer:'まず、この場所について短く書いてから決めよう。',firstTechnology:'最初の決断をして、技術を選ぶと進めます。',
     choosePath:'自分たちの道をつくる',cardHint:'つながったカードを七つまで選ぼう。最初の段から始めます。',fromDecision:'決断から生まれた選択',
     aboutLocation:'この場所とイラストについて',mapAlt:'AからKまでの地点を示す授業用の世界地図',
-    portraitNote:'架空の共同体の代表です。広い地域や気候をイメージした姿で、特定の文化や時代を再現したものではありません。',
+    portraitNote:'紀元前3000年頃に暮らす架空の人物です。手作りの獣皮や染めていない植物繊維の衣服を着ています。特定の文化を代表する人物ではありません。',
     artDescription:'オリジナルの風景イラスト',worldArt:'川、山、集落を描いた風景',
     chapterIntros:['人々が暮らす場所を見つけよう。土地から物語が始まります。','共同体が何をつくり、何を学ぶか考えよう。','人々がともに暮らし、働く方法を決めよう。','一つ一つの選択が、私たちの歴史になります。'],
     placeAnswer:'この場所で役立つものや難しいことは？',placeAnswerPh:'川は移動に役立つが、洪水は難しいかもしれない。',
@@ -420,4 +422,31 @@ Object.assign(dictionary.en,rpgText.en);
 Object.assign(dictionary.ja,rpgText.ja);
 
 // Labels for the presentation summary rows, in presentation order.
-export const summaryKeys = ['place','avatar','tech','civic','land','placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer','origin','encounter'];
+export const summaryKeys = ['place','avatar','tech','civic','land','placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer','origin','encounter','route','mapEffects'];
+
+Object.assign(dictionary.en, {
+  steps:['Your place','Discover technology','Shape society','Choose your future'],
+  gbEra:'Step',gbNextEra:'Next step',gbPrevEra:'Previous step',gbObjectives:'This step',gbEraDone:'Step complete',
+  sameScreen:'Work at your team’s pace. Your teammates share these choices.',
+  guideStory:'Reflect on meeting others, then choose an available route before submitting. You can keep developing locally.',
+  cardHint:'Choose a few connected cards, up to seven. You do not need to fill the tree. Your technology and civics can unlock a final route.',
+  route:'Future route',routeTitle:'Where do we go from here?',routeChooseTitle:'Choose your next chapter',routeFinalAct:'Your final decision',
+  routeIntro:'Your discoveries open different futures. Choose one for your civilization, then send your story to your teacher.',
+  routeAvailable:'Available',routeLocked:'Needs discoveries',routeOr:'or',
+  routeFinishSteps:'Finish the first three steps to make your final choice. You can preview the requirements below.',
+  routeYourFuture:'Our next chapter',routeNoPressure:'This is a plan for the future. Your team can submit without unlocking an outward route.',
+  routeReview:'Review our civilization',submitHint:'Finish your explanations and review your final route. Developing locally is a valid choice.'
+});
+Object.assign(dictionary.ja, {
+  steps:['場所を知る','技術を発見する','社会をつくる','未来を選ぶ'],
+  gbEra:'ステップ',gbNextEra:'次のステップへ',gbPrevEra:'前のステップへ',gbObjectives:'このステップの目標',gbEraDone:'ステップ完了',
+  sameScreen:'チームのペースで進めよう。選択は同じチームで共有されます。',
+  guideStory:'他の人々との出会いを振り返り、提出前に開かれた道を選ぼう。地域を育て続けてもかまいません。',
+  cardHint:'つながったカードを七つまで選ぼう。全部埋める必要はありません。技術と社会制度で最後の道が開きます。',
+  route:'未来への道',routeTitle:'ここから、どこへ進もう？',routeChooseTitle:'次の章を選ぼう',routeFinalAct:'最後の決断',
+  routeIntro:'発見によって、異なる未来が開きます。文明の道を一つ選んで、物語を先生に送ろう。',
+  routeAvailable:'選択可能',routeLocked:'発見が必要',routeOr:'または',
+  routeFinishSteps:'最初の三つのステップを終えると、最後の道を選べます。必要な発見は下で確認できます。',
+  routeYourFuture:'私たちの次の章',routeNoPressure:'これは未来の計画です。外への道を開かなくても提出できます。',
+  routeReview:'私たちの文明を確認する',submitHint:'説明を完成させ、最後の道を確認しよう。地域を育てる選択でも提出できます。'
+});

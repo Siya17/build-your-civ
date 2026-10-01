@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { applyAction, codeTag, initialState, isCodeShape, normalizeCode, submissionGaps, mapPoints } from '../shared/game.js';
 import { settleTiles } from '../shared/land.js';
+import { createSession as createWorldState, applySessionAction, sessionView } from '../shared/strategy/turn-manager.js';
+import { harvestForecast } from '../shared/strategy/hex.js';
 
 const dataDir = resolve(process.env.DATA_DIR || join(process.cwd(), 'data'));
 mkdirSync(dataDir, { recursive: true });
@@ -39,6 +41,18 @@ CREATE TABLE IF NOT EXISTS activity_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS worlds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  state_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS world_access (
+  token_hash TEXT PRIMARY KEY,
+  world_id INTEGER NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('host','highland','river')),
+  expires_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS log_team ON activity_log(team_id,id);`);
 
@@ -74,6 +88,72 @@ const statements = {
 statements.expireSessions.run(Date.now());
 
 const hash = value => createHmac('sha256', secret).update(value).digest('hex');
+
+const worlds = {
+  create: db.prepare('INSERT INTO worlds (code,state_json,updated_at) VALUES (?,?,?)'),
+  byId: db.prepare('SELECT * FROM worlds WHERE id=?'),
+  byCode: db.prepare('SELECT * FROM worlds WHERE code=?'),
+  update: db.prepare('UPDATE worlds SET state_json=?,updated_at=? WHERE id=?'),
+  access: db.prepare('INSERT INTO world_access (token_hash,world_id,role,expires_at) VALUES (?,?,?,?)'),
+  authenticated: db.prepare('SELECT * FROM world_access WHERE token_hash=? AND expires_at>?'),
+  count: db.prepare('SELECT COUNT(*) AS count FROM worlds'),
+  prune: db.prepare('DELETE FROM worlds WHERE updated_at<?'),
+  expire: db.prepare('DELETE FROM world_access WHERE expires_at<?')
+};
+function worldToken(worldId, role) {
+  const token = randomBytes(32).toString('base64url');
+  worlds.access.run(hash(token), worldId, role, Date.now() + 7 * 86400_000);
+  return token;
+}
+export function createWorld() {
+  worlds.prune.run(Date.now() - 30 * 86400_000); worlds.expire.run(Date.now());
+  if (worlds.count.get().count >= 500) throw new Error('This classroom has reached its active world limit');
+  let code;
+  do { code = randomBytes(5).toString('hex').toUpperCase(); } while (worlds.byCode.get(code));
+  const result = worlds.create.run(code, JSON.stringify(createWorldState()), Date.now());
+  const id = Number(result.lastInsertRowid);
+  return { token: worldToken(id, 'host') };
+}
+export function joinWorld(code, role) {
+  if (!['highland', 'river'].includes(role)) throw new Error('Choose a civilization');
+  const normalized = String(code ?? '').replace(/[\s-]/g, '').toUpperCase();
+  const world = /^[A-F0-9]{10}$/.test(normalized) && worlds.byCode.get(normalized);
+  if (!world) throw new Error('World code not found');
+  return { token: worldToken(world.id, role) };
+}
+export function getWorldAccess(token) {
+  const access = token && worlds.authenticated.get(hash(token), Date.now());
+  return access ? { worldId: access.world_id, role: access.role } : null;
+}
+export function worldPayload(access, requestedPlayer) {
+  const row = worlds.byId.get(access.worldId);
+  if (!row) throw new Error('World not found');
+  const state = JSON.parse(row.state_json);
+  const playerId = access.role === 'host' ? requestedPlayer ?? 'highland' : access.role;
+  if (!Object.hasOwn(state.players, playerId)) throw new Error('Unknown civilization');
+  const forecasts = Object.fromEntries(Object.values(state.players).map(player => {
+    const amount = harvestForecast(state.board, player, state.clock.round,state.clock.season).yield;
+    return [player.id, amount];
+  }));
+  return { code: row.code, role: access.role, playerId, forecasts, state: sessionView(state, playerId) };
+}
+export function updateWorld(access, requestedPlayer, action) {
+  if (access.role !== 'host' && requestedPlayer && requestedPlayer !== access.role) {
+    const error = new Error('Your code controls only your civilization'); error.status = 403; throw error;
+  }
+  const actorId = access.role === 'host' ? requestedPlayer : access.role;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = worlds.byId.get(access.worldId);
+    if (!row) throw new Error('World not found');
+    const state = JSON.parse(row.state_json);
+    if (action?.expectedRevision !== state.revision) { const error = new Error('Another community acted. The board has refreshed; choose your action again.'); error.status = 409; throw error; }
+    const next = applySessionAction(state, { ...action, actorId });
+    worlds.update.run(JSON.stringify(next), Date.now(), row.id);
+    db.exec('COMMIT');
+    return worldPayload(access, actorId);
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
 const rowTeam = row => {
   if(!row)return null;
   const state=JSON.parse(row.state_json);
@@ -168,6 +248,7 @@ export function updateTeam(id, action, actor) {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
     if (row.submitted_at) throw new Error('This team has already submitted. Ask the teacher to reopen it.');
+    if(Object.hasOwn(action,'expectedVersion')&&action.expectedVersion!==row.version){const error=new Error('The team changed. Review the updated choice before confirming.');error.status=409;throw error;}
     const next = applyAction(JSON.parse(row.state_json), action);
     statements.setState.run(JSON.stringify(next),id);
     statements.insertLog.run(id,actor,action.type);

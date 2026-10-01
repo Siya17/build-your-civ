@@ -40,6 +40,7 @@ export interface PlayerState {
   health: number;
   actionsLeft: number;
   ready: boolean;
+  research: ('masonry' | 'preservation' | 'waterways')[];
 }
 export interface WorkMilestone {
   id: string;
@@ -95,6 +96,7 @@ export interface SessionState {
 export type SessionAction = { actorId: PlayerId; expectedRevision: number } & (
   | { type: 'ready' }
   | { type: 'vote'; policy: AssemblyPolicy }
+  | { type: 'research'; researchId: 'masonry' | 'preservation' | 'waterways' }
   | { type: 'scout' | 'clear'; tileId: TileId }
   | { type: 'build'; tileId: TileId; structure: Structure }
   | { type: 'infrastructure'; tileId: TileId; infrastructure: Infrastructure }

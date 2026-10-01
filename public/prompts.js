@@ -1,8 +1,8 @@
 // The council's questions, written from the team's own land, buildings and decisions. The
 // five answers the teacher receives stay the same; only the wording meets the team where it is.
-import { trees } from '/shared/game.js';
-import { locations } from '/shared/world.js';
-import { generateLand, improvements, terrains, hazardOf, center } from '/shared/land.js';
+import { trees } from '../shared/game.js';
+import { locations } from '../shared/world.js';
+import { generateLand, improvements, terrains, hazardOf, center } from '../shared/land.js';
 
 export const fill=(template,values)=>String(template).replace(/\{(\w+)\}/g,(_,key)=>values[key]??'');
 const hazardKeys={flood:'Flood',drought:'Drought',storm:'Storm',frost:'Frost'};

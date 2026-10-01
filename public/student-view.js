@@ -1,10 +1,12 @@
-import { trees, mapPoints, gateOpen, hasCoreChoice, questStatus, submissionGaps } from '/shared/game.js';
-import { locations, characters, outcomes } from '/shared/world.js';
-import { summaryKeys } from '/shared/i18n.js';
-import { improvements, terrains, generateLand, fitTiles } from '/shared/land.js';
-import { sceneMarkup, portraitMarkup, cardIcon } from '/rpg.js';
-import { landMarkup, tileInfo, movingInfo, buildingList, landSummary } from '/hexmap.js';
-import { councilPrompt, seasonText, fill } from '/prompts.js';
+import { trees, mapPoints, gateOpen, hasCoreChoice, questStatus, submissionGaps } from '../shared/game.js';
+import { civilizationRoutes, routeById, routeEligibility } from '../shared/routes.js';
+import { locations, characters, outcomes } from '../shared/world.js';
+import { summaryKeys } from '../shared/i18n.js';
+import { improvements, terrains, generateLand, fitTiles } from '../shared/land.js';
+import { sceneMarkup, portraitMarkup, cardIcon } from './rpg.js';
+import { landMarkup, tileInfo, movingInfo, buildingList, landSummary } from './hexmap.js';
+import { councilPrompt, seasonText, fill } from './prompts.js';
+import { layoutReport } from '../shared/layout-report.js';
 
 const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localized=(value,lang)=>value?.[lang]??'';
@@ -14,12 +16,13 @@ const cap=word=>word[0].toUpperCase()+word.slice(1);
 const ROMAN=['I','II','III','IV'];
 
 export function renderSummaryRows(state,lang,L){
-  const values={
+  const values={mapEffects:layoutReport(state,lang),
     place:state.mapPoint?`[${state.mapPoint}] ${localized(locations[state.mapPoint]?.region,lang)}`:'',
     avatar:localized(characters[state.mapPoint],lang),
     tech:state.tech.map(id=>cardName('tech',id,lang)).join(' → '),
     civic:state.civic.map(id=>cardName('civic',id,lang)).join(' → '),
     land:landSummary(state,lang),
+    route:routeById(state.route||'local')?.[lang],
     origin:state.events?.origin?`${choiceName(state.events.origin,L)} — ${localized(outcomes[state.events.origin]?.benefit,lang)} ${localized(outcomes[state.events.origin]?.tradeoff,lang)}`:'',
     encounter:state.events?.encounter?`${choiceName(state.events.encounter,L)} — ${localized(outcomes[state.events.encounter]?.benefit,lang)} ${localized(outcomes[state.events.encounter]?.tradeoff,lang)}`:''
   };
@@ -57,11 +60,11 @@ export function eraTrackMarkup(team,L){
   const state=team.state,locked=!!team.submittedAt,goals=objectives(team);
   return L.steps.map((name,i)=>{
     const list=goals[i],done=list.filter(g=>g.done).length;
-    return `<button data-stage="${i+1}" class="era ${state.stage===i+1?'current':''} ${done===list.length?'complete':''}" ${locked?'disabled':''} aria-current="${state.stage===i+1?'step':'false'}"><span class="era-num">${L.gbEra} ${ROMAN[i]}</span><span class="era-name">${name}</span><span class="era-pips" aria-label="${done} / ${list.length}">${list.map(g=>`<i class="${g.done?'on':''}"></i>`).join('')}</span></button>`;
+    return `<button data-stage="${i+1}" class="era ${state.stage===i+1?'current':''} ${done===list.length?'complete':''}" ${locked||i+1>state.stage&&!goals.slice(0,i).every(step=>step.every(g=>g.done))?'disabled':''} aria-current="${state.stage===i+1?'step':'false'}"><span class="era-num">${L.gbEra} ${ROMAN[i]}</span><span class="era-name">${name}</span><span class="era-pips" aria-label="${done} / ${list.length}">${list.map(g=>`<i class="${g.done?'on':''}"></i>`).join('')}</span></button>`;
   }).join('');
 }
 
-const field=(key,state,lang,L,locked)=>{
+export const field=(key,state,lang,L,locked)=>{
   const {q,starter}=councilPrompt(key,state,lang,L);
   return `<section class="answer-section council-question" data-answer="${key}"><span class="eyebrow">${L.gbCouncilAsks}</span><label class="answer-field rpg-field"><span class="council-q">${safe(q)}<small class="presence" data-presence="${key}"></small></span><textarea data-field="${key}" placeholder="${L.answerHint}" maxlength="600" ${locked?'disabled':''}>${safe(state[key])}</textarea></label><details class="sentence-starter"><summary>${L.sentenceStarter}</summary><p>${safe(starter)}</p></details></section>`;
 };
@@ -73,7 +76,7 @@ export function councilMarkup(team,lang,L){
   const list=`<section class="objectives"><h3>${L.gbObjectives}</h3><ol>${goals.map(g=>`<li class="${g.done?'done':''}"><button data-goal="${g.goal}"><span class="obj-mark" aria-hidden="true">${g.done?'✓':''}</span>${L['obj'+cap(g.id)]}</button></li>`).join('')}</ol></section>`;
   const questions=stage===1&&!state.mapPoint?'':eraFields[stage-1].map(key=>field(key,state,lang,L,locked)).join('');
   const submit=stage===4?`<div class="submission-box" id="submission">${renderSubmissionBox(team,L)}</div>`:'';
-  const nav=`<div class="era-nav">${stage>1&&!locked?`<button class="btn-ghost" data-action="previous">← ${L.gbPrevEra}</button>`:'<span></span>'}${stage<4&&!locked?`<button class="btn-primary ${goals.every(g=>g.done)?'ready':''}" data-action="next">${L.gbNextEra} →</button>`:''}</div>`;
+  const nav=`<div class="era-nav">${stage>1&&!locked?`<button class="btn-ghost" data-action="previous">← ${L.gbPrevEra}</button>`:'<span></span>'}${stage<4&&!locked?`<button class="btn-primary ${goals.every(g=>g.done)?'ready':''}" data-action="next" ${goals.every(g=>g.done)?'':'disabled'}>${L.gbNextEra} →</button>`:''}</div>`;
   return `${head}${guide}${list}${questions}${submit}${nav}`;
 }
 
@@ -118,7 +121,7 @@ function treeLayout(kind){
   const rows=Math.max(...Object.values(row))+1,cols=groups.length;
   return layouts[kind]={items,row,col,rows,cols,width:cols*COL+(cols-1)*GAP,height:rows*ROW+(rows-1)*RGAP};
 }
-function treeMarkup(kind,state,lang,L,locked){
+export function treeMarkup(kind,state,lang,L,locked){
   const {items,row,col,cols,width,height}=treeLayout(kind);
   const x=c=>c*(COL+GAP),y=r=>r*(ROW+RGAP)+ROW/2;
   const links=items.flatMap(item=>item.parents.map(parent=>{
@@ -135,7 +138,7 @@ export function drawerMarkup(team,lang,L,ui){
   return `<div class="drawer-scrim" data-action="close-drawer"></div><section class="drawer-panel" role="dialog" aria-label="${kind==='tech'?L.gbScience:L.gbSociety}"><header class="drawer-head"><div class="drawer-tabs" role="tablist">${['tech','civic'].map(k=>`<button role="tab" data-action="drawer:${k}" aria-selected="${k===kind}" class="${k===kind?'on':''}">${k==='tech'?L.gbScience:L.gbSociety}<b>${state[k].length}/7</b></button>`).join('')}</div><div class="drawer-mini">${landMarkup(state,lang,L,{mode:'mini'})}</div><p class="drawer-note" id="drawer-note" aria-live="polite">${L.cardHint}</p><button class="drawer-close" data-action="close-drawer">${L.gbBackToMap} ✕</button></header><div class="drawer-body">${special.length?`<div class="special-cards"><span class="special-label">${L.fromDecision}</span>${special.map(x=>card(x,kind,state,lang,L,locked)).join('')}</div>`:''}${treeMarkup(kind,state,lang,L,locked)}</div></section>`;
 }
 
-function atlasMarkup(state,lang,L,locked){
+export function atlasMarkup(state,lang,L,locked){
   return `<div class="atlas"><p>${L.mapHelp}</p><div class="map-wrap"><img src="/assets/slide8-map.png" alt="${L.mapAlt}"/>${Object.keys(mapPoints).map(letter=>`<button class="map-dot ${state.mapPoint===letter?'active':''}" data-map="${letter}" aria-label="${letter} · ${safe(localized(locations[letter].region,lang))}" aria-pressed="${state.mapPoint===letter}" ${locked?'disabled':''}>${letter}</button>`).join('')}</div></div>`;
 }
 function eraEyebrow(state,lang,L){
@@ -143,21 +146,32 @@ function eraEyebrow(state,lang,L){
 }
 export function toolbarMarkup(team,lang,L){
   const state=team.state,locked=!!team.submittedAt,has=!!locations[state.mapPoint],waiting=pendingEvent(state);
-  const title=[L.placeTitle,L.techTitle,L.civicTitle,L.chronicle][state.stage-1];
+  const title=[L.placeTitle,L.techTitle,L.civicTitle,L.routeTitle][state.stage-1];
   const tools=has?[
     waiting?`<button class="tool tool-event" data-action="open-event:${waiting}"><span aria-hidden="true">!</span>${L.gbEventWaiting}</button>`:'',
     `<button class="tool ${state.stage===2?'suggested':''}" data-action="drawer:tech">${cardIcon('writing')}${L.gbScience}<b>${state.tech.length}/7</b></button>`,
     `<button class="tool ${state.stage===3?'suggested':''}" data-action="drawer:civic">${cardIcon('laws')}${L.gbSociety}<b>${state.civic.length}/7</b></button>`,
-    `<button class="tool" data-action="open-scene">${cardIcon('navigation')}${L.gbScene}</button>`,
+    state.stage<4?`<button class="tool" data-action="open-scene">${cardIcon('navigation')}${L.gbScene}</button>`:'',
     state.stage===1&&!locked&&!state.fixedPoint?`<button class="tool" data-action="open-atlas">${L.gbChangePlace}</button>`:''
   ].join(''):'';
   return `<div class="board-title"><span class="eyebrow">${eraEyebrow(state,lang,L)}</span><h1 class="chapter-title">${title}</h1></div><div class="board-tools">${tools}</div>`;
 }
 export function stageMarkup(team,lang,L,ui){
   const state=team.state,locked=!!team.submittedAt;
-  if(state.stage===4)return `<section class="chronicle-panel board-chronicle"><div class="preview-head"><span>${L.chronicle}</span><h2>${safe(team.name)}</h2></div>${state.mapPoint?`<div class="chronicle-land">${landMarkup(state,lang,L,{mode:'mini'})}</div>`:''}<div class="preview-body"><dl id="summary">${renderSummaryRows(state,lang,L)}</dl></div></section>`;
+  if(state.stage===4)return routeCapstone(team,lang,L);
   if(!state.mapPoint)return `<div class="board-atlas"><h2>${L.chooseHomeland}</h2><p class="atlas-lead">${L.gbChooseFirst}</p>${atlasMarkup(state,lang,L,locked)}</div>`;
   return landMarkup(state,lang,L,{selected:ui.selected,locked});
+}
+
+export function routeCapstone(team,lang,L){
+  const state=team.state,ready=questStatus(state).slice(0,3).every(Boolean);
+  const selected=routeById(state.route||'local');
+  const requirement=(route,kind,met)=>route[kind].length?`<span class="route-requirement ${met?'met':''}"><b>${met?'✓':'○'} ${kind==='tech'?L.tech:L.civic}</b>${safe(route[kind].map(id=>cardName(kind,id,lang)).join(` ${L.routeOr} `))}</span>`:'';
+  const cards=civilizationRoutes.map(route=>{
+    const eligibility=routeEligibility(state,route),chosen=selected?.id===route.id;
+    return `<button class="route-card ${chosen?'selected':''} ${eligibility.unlocked?'unlocked':'locked'}" data-route="${route.id}" aria-pressed="${chosen}" ${team.submittedAt||!ready||!eligibility.unlocked?'disabled':''}><span class="route-card-top"><span class="route-symbol" aria-hidden="true">${route.icon}</span><span class="route-status">${chosen?L.chosen:eligibility.unlocked?L.routeAvailable:L.routeLocked}</span></span><strong>${safe(route[lang])}</strong><p>${safe(route.description[lang])}</p><div class="route-requirements">${requirement(route,'tech',eligibility.tech)}${requirement(route,'civic',eligibility.civic)}</div><small>${safe(route.tradeoff[lang])}</small></button>`;
+  }).join('');
+  return `<section class="route-capstone"><header><span class="eyebrow">${L.routeFinalAct}</span><h2>${L.routeChooseTitle}</h2><p>${L.routeIntro}</p>${!ready?`<p class="route-help">${L.routeFinishSteps}</p>`:''}</header><div class="route-options">${cards}</div><div class="route-outcome" aria-live="polite"><div class="route-map">${state.mapPoint?landMarkup(state,lang,L,{mode:'mini'}):''}</div><div><span class="eyebrow">${L.routeYourFuture}</span><h3>${safe(selected?.[lang]||'')}</h3><p>${safe(selected?.description[lang]||'')}</p><p>${L.routeNoPressure}</p></div></div><details class="route-review"><summary>${L.routeReview}</summary><dl id="summary">${renderSummaryRows(state,lang,L)}</dl></details></section>`;
 }
 export function footMarkup(team,lang,L,ui){
   const state=team.state;
@@ -167,11 +181,11 @@ export function footMarkup(team,lang,L,ui){
 
 // Event cards arrive over the map. After a decision the card turns over to show what it
 // changed on the land and the development it opened, which can be taken straight away.
-function eventCard(id,team,lang,L,ui){
+export function eventCard(id,team,lang,L,ui){
   const state=team.state,locked=!!team.submittedAt,first=id==='origin',current=state.events?.[id],eligible=eventReady(id,state);
   const kind=first?'tech':'civic',unlocked=current?trees[kind].find(x=>x.gate?.[1]===current):null;
   if(ui.result===id&&current){
-    return `<div class="event-card result" role="dialog" aria-labelledby="event-title"><span class="eyebrow">${first?L.origin:L.encounter}</span><h2 id="event-title">${L[current+'Choice']}</h2><p class="event-effect">${L['effect'+cap(current)]}</p>${unlocked?`<div class="event-reward">${card(unlocked,kind,state,lang,L,locked)}</div>`:''}<p class="event-cost"><b>${L.tradeoffLabel}</b> ${localized(outcomes[current].tradeoff,lang)}</p><button class="btn-primary" data-action="close-overlay">${L.gbContinue} →</button></div>`;
+    return `<div class="event-card result" role="dialog" aria-labelledby="event-title"><span class="eyebrow">${first?L.origin:L.encounter}</span><h2 id="event-title">${L[current+'Choice']}</h2><p class="event-effect">${L['effect'+cap(current)]}</p>${unlocked?`<div class="event-reward"><strong>${localized(unlocked,lang)}</strong></div>`:''}<p class="event-cost"><b>${L.tradeoffLabel}</b> ${localized(outcomes[current].tradeoff,lang)}</p><button class="btn-primary" data-action="close-overlay">${L.gbContinue} →</button></div>`;
   }
   const options=first?['steward','explore']:state.events?.origin==='steward'?['share','reserve']:['exchange','guard'];
   const heading=first?(seasonText(state,L)||L.originPrompt):state.events?.origin==='steward'?L.encounterStewardPrompt:L.encounterExplorePrompt;

@@ -12,8 +12,9 @@ A bilingual, shared classroom game for the Tama University Week 2 activity. The 
 - Four quests and badges guide the team through two branching story events. Event choices unlock special development cards and show a possible benefit and tradeoff.
 - The science and society trees each permit seven choices, with prerequisites checked by the server. They are drawn as connected trees, and the chosen path lights up.
 - Each team has a hex homeland built from its map point: coast, rivers, mountains and deserts follow the geography card. Every chosen card raises a building on a fitting hex. Teams can move buildings, and pointing at a hex explains which buildings suit that land. Exploring outward and travel technologies clear the fog. The settlement grows from village to town to city. There is no score.
-- The student screen is one game board. An era track runs across the top. The council column on the left holds the era's objectives (each one leads to its task) and the council's questions. The homeland map is in the centre, with the trees in a drawer over it. Story events arrive as cards over the map. After a decision, the card turns over to show what changed and the card it unlocked.
-- Decisions show on the land. The place's hard season (flood, drought, storm or frost) is marked before the first decision. Protecting supplies lights the stores; mapping paths outward draws a route that clears the fog. In era 3 a neighbouring camp appears at the edge, joined by a road, carts, a watchtower or a wall.
+- The default student screen is a guided four-step activity: know your place, discover technology, shape society, choose your future. Each team advances independently. The council holds the current step's objectives and short questions; the map shows its choices. There is no shared turn clock or resource management.
+- The final step offers local development, a caravan route, a water route, or a learning network. Outward routes unlock only when the team has a matching technology AND civic; each shows its prerequisites and tradeoff. Local development is always a valid finish. The teacher receives the chosen route with the existing answers.
+- Decisions show on the land. The place's hard season (flood, drought, storm or frost) is marked before the first decision. Protecting supplies lights the stores; mapping paths outward draws a route that clears the fog. In step 3 a neighbouring camp appears at the edge. The final route is drawn as a proposed connection.
 - Council questions and sentence starters are written from the team's own place, buildings, cards and decisions. The five answers the teacher receives are unchanged.
 - Clicks update the page immediately, and the server's answer confirms or rolls back the change. Only the changed parts of the page are redrawn.
 - A complete team can submit once. Submission locks editing until the teacher reopens it.
@@ -41,8 +42,9 @@ physical supply routes, ecosystem crises and a cooperative Winter Sanctuary.
 Run `npm run demo:coop` for a complete legal session. Its TypeScript contracts are
 in `shared/strategy/types.d.ts`; runtime code remains dependency-free JavaScript.
 See [COOPERATIVE_DESIGN.md](COOPERATIVE_DESIGN.md) for the repository audit, rules
-and four-step integration roadmap. The existing browser classroom game and saved
-teams retain their current behavior; the new engine is not yet connected to its UI.
+and the original integration roadmap. An experimental turn-based browser is kept
+separately at `/play`; `/` and `/classroom` serve the team-paced classroom activity.
+The experimental world data is separate from classroom teams and submissions.
 
 ## Project layout
 
@@ -50,6 +52,7 @@ teams retain their current behavior; the new engine is not yet connected to its 
 | --- | --- |
 | `public/` | Student and teacher interface, styles, generated artwork, slide map |
 | `shared/game.js` | Shared game content, branch rules, prerequisites, and validation |
+| `shared/routes.js` | Final route definitions, technology/civic requirements and unlock checks |
 | `shared/world.js` | Bilingual A–K geography cards, source links, characters, and outcomes |
 | `shared/land.js` | Homeland terrain per map point, buildings per card, fog of war and placement rules |
 | `public/hexmap.js` | SVG drawing of the homeland map and the story decisions on it |

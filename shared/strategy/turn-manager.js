@@ -1,5 +1,5 @@
 import { resources, addResources, spendResources } from './resources.js';
-import { adjacentTiles, createBoard, hexDistance, STRUCTURES, CIVILIZATIONS, calculatePlayerYield } from './hex.js';
+import { adjacentTiles, createBoard, hexDistance, STRUCTURES, CIVILIZATIONS, RESEARCH, harvestForecast } from './hex.js';
 import { INFRASTRUCTURE, reserveRoute } from './logistics.js';
 import { createGreatWork, contributeGreatWork, greatWorkMissedDeadline, greatWorkContributors } from './great-work.js';
 
@@ -37,7 +37,7 @@ export function createSession(roster = [{ id: 'highland', civilization: 'highlan
   const board = createBoard(), homes = { highland: '-2,0', river: '2,0', woodland: '0,3' };
   const starters = { highland: ['-2,1', 'mine'], river: ['2,-1', 'farm'], woodland: ['0,2', 'shrine'] };
   const players = Object.fromEntries(roster.map(({ id, civilization }) => [id, {
-    id, civilization, settlement: homes[civilization], stock: resources({ food: 8, materials: 8 }), health: 3, actionsLeft: SESSION_RULES.actions, ready: false
+    id, civilization, settlement: homes[civilization], stock: resources({ food: 8, materials: 8 }), health: 3, actionsLeft: SESSION_RULES.actions, ready: false, research: []
   }]));
   for (const player of Object.values(players)) {
     const home = board[player.settlement];
@@ -76,11 +76,9 @@ function resolveRound(state) {
   state.phase = 'resolution';
   const { round, season } = state.clock;
   for (const player of Object.values(state.players)) {
-    const result = calculatePlayerYield(state.board, player, round), amount = result.yield;
-    if (season === 'winter') amount.food = Math.floor(amount.food / 2);
-    if (season === 'autumn' && !Object.values(state.board).some(tile => tile.owner === player.id && tile.structure === 'storehouse')) amount.food = Math.max(0, amount.food - 1);
+    const result = harvestForecast(state.board, player, round,season), amount = result.yield;
     player.stock = addResources(player.stock, amount);
-    const upkeep = season === 'winter' ? 2 : 1;
+    const upkeep = result.upkeep;
     if (player.stock.food < upkeep) { player.health -= 1; player.stock.food = 0; }
     else player.stock.food -= upkeep;
     state.ecosystem -= result.impact;
@@ -171,13 +169,20 @@ export function applySessionAction(previous, action) {
       } else if (action.type === 'build') {
         const tile = accessibleTile(state, action, player), rule = STRUCTURES[action.structure];
         if (!Object.hasOwn(STRUCTURES, action.structure) || tile.structure || tile.id === state.work.site || !rule.terrains.includes(tile.terrain)) throw new Error('Structure does not fit this free tile');
+        const technology = Object.keys(RESEARCH).find(id => RESEARCH[id].unlocks === action.structure);
+        if (technology && !player.research?.includes(technology)) throw new Error('Research this development first');
         player.stock = spendResources(player.stock, resources(rule.cost));
         tile.structure = action.structure; tile.owner = player.id;
       } else if (action.type === 'infrastructure') {
         const tile = accessibleTile(state, action, player), rule = INFRASTRUCTURE[action.infrastructure];
         if (!Object.hasOwn(INFRASTRUCTURE, action.infrastructure) || tile.infrastructure || !rule.terrains.includes(tile.terrain)) throw new Error('Infrastructure does not fit this tile');
+        if (action.infrastructure === 'canal' && !player.research?.includes('waterways')) throw new Error('Research waterways first');
         player.stock = spendResources(player.stock, resources(rule.cost)); tile.infrastructure = action.infrastructure;
         // A neutral transport corridor stays neutral and is usable by every partner.
+      } else if (action.type === 'research') {
+        if (!Object.hasOwn(RESEARCH, action.researchId) || player.research?.includes(action.researchId)) throw new Error('Choose an unlearned development');
+        player.stock = spendResources(player.stock, resources(RESEARCH[action.researchId].cost));
+        (player.research ??= []).push(action.researchId);
       } else if (action.type === 'clear') {
         const tile = accessibleTile(state, action, player);
         if (tile.terrain !== 'forest' || tile.structure || tile.node?.kind === 'natural-wonder') throw new Error('Clear an unoccupied forest');

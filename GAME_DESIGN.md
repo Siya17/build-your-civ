@@ -1,5 +1,30 @@
 # Analysis of the classroom game
 
+## Current classroom format
+
+Teams complete four guided steps independently within one class and one era.
+There are no class-wide turns, resource stocks, seasonal countdowns, or dependencies
+on another team's availability. Live updates are only for members of the same team.
+
+1. **Your place:** read geography, explain an opportunity and difficulty, make the first story decision.
+2. **Discover technology:** select a few connected cards and explain the most important tool. Seven is a ceiling, not a target.
+3. **Shape society:** respond to a neighboring community, choose civics, explain organization and beliefs.
+4. **Choose your future:** reflect on contact, pick an available future route, review, and submit.
+
+Outward routes require both technology and a civic. Caravan: Wheel or Horseback
+Riding, plus Foreign Trade, Trade Accord, or Route Stewards. Water: Sailing, plus
+Foreign Trade, Trade Accord, or Mutual Aid. Learning: Writing, plus Political
+Philosophy or Recorded History. Each has a benefit and a cost; these are proposals
+for future development rather than simulated shipping. Developing locally is the
+default and a valid outcome, including for older saved teams without a route field.
+
+The implementation follows four small changes to the original classroom app:
+restore the classroom entrypoint; add `shared/routes.js` and the validated reducer
+action; replace the last-step summary with route cards and a collapsible review;
+carry the route through the existing SQLite/SSE/teacher summary pipeline. Five
+short answers and existing submissions remain compatible. The turn-based engine
+and browser are experimental at `/play` and are not part of classroom progression.
+
 ## Learning goal
 
 The activity asks students to connect geography, resources, technology, social organization, and contact between societies. A strong answer explains *why* a choice fits its place and *who* it affects. Collecting the most advanced cards is not the goal.
@@ -10,7 +35,7 @@ The activity asks students to connect geography, resources, technology, social o
 2. **Decide:** respond to an uncertain season; the choice unlocks one technology card. Choose a path through the original science tree.
 3. **Encounter:** respond to another community; the event changes with the first decision and unlocks one society card. Choose a path through the original civics tree.
 4. **Explain:** answer five short prompts covering geography, technology, government and economy, beliefs, and contact with its benefits and costs.
-5. **Submit:** read the civilization chronicle, agree on a team story, and send it to the teacher.
+5. **Submit:** choose an unlocked future route or local development, review the civilization chronicle, and send it to the teacher.
 
 The app shares the current chapter and all answers across a team. This makes decision-making cooperative: students must discuss choices rather than building separate private versions. A completed submission is the clear finish state. The teacher can reopen it if the group needs to revise.
 

@@ -4,6 +4,11 @@ import { hexes, isRevealed, improvements, terrains, generateLand } from '/shared
 import { renderStudentView, renderSummaryRows, renderSubmissionBox, renderQuestLog, eraTrackMarkup, councilMarkup, toolbarMarkup, stageMarkup, overlayMarkup, footMarkup, sideMarkup, drawerMarkup, cardStatus, pendingEvent } from '/student-view.js';
 import { landMarkup, tileInfo } from '/hexmap.js';
 import { councilPrompt, fill } from '/prompts.js';
+import { renderGuidedView, suggestedSite } from '/guided-view.js';
+import { nextTask, taskAvailable, progressStage } from '/shared/flow.js';
+import { f } from '/shared/flow-copy.js';
+import { suggestTrail, assessLayout, trailError } from '/shared/layout.js';
+import { fitTiles } from '/shared/land.js';
 
 const app=document.querySelector('#app');
 const noticeBox=document.querySelector('#notice');
@@ -19,7 +24,8 @@ let serverTeam=null,pending=[],actionQueue=Promise.resolve();
 // Page-only state for the board: the building being moved, the hex being read, the card
 // shown over the map (arrival scene, atlas or an event), whether an event card is showing
 // its result, the open tree drawer, and which one-time cards this student has already seen.
-const ui={selected:null,hover:null,overlay:null,result:null,drawer:null,seen:new Set()};
+const ui={selected:null,hover:null,overlay:null,result:null,drawer:null,seen:new Set(),task:'hub',building:null,pick:null,site:null,path:[],trailMode:'add',busy:false,eventResult:null};
+const answerDrafts=new Map(),savingFields=new Map();
 let shownKey='';
 // A revealed join code exists nowhere else: the server keeps only its hash. Losing it to a
 // page refresh would force a new code and cut off students who already have the old one.
@@ -36,9 +42,9 @@ const button=(text,action,cls='btn-primary')=>`<button class="${cls}" data-actio
 const submitted=()=>!!team?.submittedAt;
 function toast(message,type='info'){notice=message;noticeType=type;renderNotice();setTimeout(()=>{if(notice===message){notice='';renderNotice()}},4400)}
 function renderNotice(){noticeBox.innerHTML=notice?`<div class="toast ${noticeType}">${esc(notice)}</div>`:''}
-async function api(path,body,method){const res=await fetch(path,{method:method||(body===undefined?'GET':'POST'),headers:body===undefined&&!method?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});const data=await res.json();if(!res.ok)throw Object.assign(new Error(data.error||L().error),{gaps:data.gaps});return data}
+async function api(path,body,method){const res=await fetch(path,{method:method||(body===undefined?'GET':'POST'),headers:body===undefined&&!method?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});const data=await res.json();if(!res.ok)throw Object.assign(new Error(data.error||L().error),{gaps:data.gaps,status:res.status,team:data.team});return data}
 // A team that starts with its homeland (A–K) meets it on the first screen of era I.
-function firstArrival(){if(session?.role==='student'&&team?.state.stage===1&&team.state.mapPoint)autoOverlays(null)}
+function firstArrival(){ui.task='hub';ui.seen=new Set();ui.pick=null;ui.building=null;answerDrafts.clear();}
 async function boot(){try{const data=await api('/api/me');adopt(data);firstArrival();render();if(data.authenticated)openStream()}catch(error){app.innerHTML=`<div class="fatal">${esc(error.message)}</div>`}}
 function adopt(data){session=data.authenticated?{role:data.role,name:data.name}:null;if(data.team){serverTeam=null;pending=[];adoptTeam(data.team)}if(data.roster)roster=data.roster;if(data.teams)teams=data.teams;if(data.presence)presenceFields=data.presence}
 function projected(){
@@ -74,40 +80,18 @@ function openStream(){
 // blow away the whole page either. Structural changes re-render; a plain text edit is
 // patched into the fields nobody is holding, and reported if it lands on one that is.
 async function onTeamEvent(event){
-  const data=JSON.parse(event.data);
-  let incoming=data.team;
-  roster=data.roster??roster;
-  if(!(incoming.version>Number(serverTeam?.version??-1))){updateLiveBits();return}
-  if(incoming.state.stage!==team?.state.stage&&saveTimers.size)await flushAll();
-  const previous=team;
-  adoptTeam(incoming);
-  incoming=team;
-  const stageChanged=previous?.state.stage!==incoming.state.stage;
-  const structural=!previous||stageChanged||previous.submittedAt!==incoming.submittedAt||previous.name!==incoming.name
-    ||previous.state.mapPoint!==incoming.state.mapPoint
-    ||previous.state.tech.join()!==incoming.state.tech.join()
-    ||previous.state.civic.join()!==incoming.state.civic.join()
-    ||previous.state.avatar!==incoming.state.avatar
-    ||!!previous.state.placeAnswer?.trim()!==!!incoming.state.placeAnswer?.trim()
-    ||JSON.stringify(previous.state.events)!==JSON.stringify(incoming.state.events)
-    ||JSON.stringify(previous.state.tiles)!==JSON.stringify(incoming.state.tiles);
-  const held=[];
-  if(!structural){
-    for(const key of textFields){
-      if(previous.state[key]===incoming.state[key])continue;
-      const el=document.querySelector(`[data-field="${key}"]`);
-      if(el&&(document.activeElement===el||saveTimers.has(key))&&el.value!==incoming.state[key])held.push(key);
-    }
-  }
-  if(structural){
-    if(ui.overlay?.startsWith('event:')){const id=ui.overlay.slice(6);if(previous?.state.events?.[id]!==incoming.state.events?.[id]&&incoming.state.events?.[id])ui.result=id}
-    if(stageChanged)ui.drawer=null;
-    autoOverlays(previous?.state);
-    render({prev:previous?.state,stageChange:stageChanged});patchFields([])
-  }
-  else{patchFields(held);updateLiveBits();updateSummary()}
-  if(held.length&&data.by&&data.by!==session?.name)toast(fmt(L().changedField,data.by),'warn');
+  const data=JSON.parse(event.data);roster=data.roster??roster;
+  if(!(data.team.version>Number(serverTeam?.version??-1))){updateLiveBits();return;}
+  const previous=team;adoptTeam(data.team);
+  if(ui.task==='placement'||ui.task==='trail')ui.reviewVersion=null;
+  // Local reading and drafts survive every shared chapter/layout change.
+  const writing=textFields.includes(ui.task);
+  const layoutChanged=JSON.stringify([previous?.state.mapPoint,previous?.state.tech,previous?.state.civic,previous?.state.tiles,previous?.state.trails,previous?.submittedAt])!==JSON.stringify([team.state.mapPoint,team.state.tech,team.state.civic,team.state.tiles,team.state.trails,team.submittedAt]);
+  if(writing&&!layoutChanged){patchFields([...answerDrafts.keys()]);updateLiveBits();updatePresence();}
+  else render({full:true,prev:previous?.state});
+  if(data.by&&data.by!==session?.name&&JSON.stringify(previous?.state)!==JSON.stringify(team.state))toast(f(lang,'updated'),'warn');
 }
+
 function patchFields(held){
   for(const el of document.querySelectorAll('[data-field]')){
     const key=el.dataset.field;
@@ -126,9 +110,14 @@ function updatePresence(){
   }
 }
 function updateSummary(){
+  if(document.querySelector('[data-guided]')){render({full:true});return;}
+
   const summary=document.querySelector('#summary');if(summary)summary.innerHTML=summaryRowsFor(team.state);
   const box=document.querySelector('#submission');if(box)box.innerHTML=submissionBoxBody();
   const quests=document.querySelector('#quest-log');if(quests)quests.outerHTML=renderQuestLog(team,L());
+  morph(document.querySelector('#era-track'),eraTrackMarkup(team,L()));
+  const council=document.createElement('div');council.innerHTML=councilMarkup(team,lang,L());
+  for(const selector of ['.objectives','.era-nav'])morph(document.querySelector(selector),council.querySelector(selector)?.innerHTML||'');
 }
 
 // Every render replaces the page, so remember where the keyboard was and put it back.
@@ -136,7 +125,7 @@ function captureFocus(){
   const el=document.activeElement;
   if(!el||el===document.body)return null;
   const data=el.dataset||{};
-  const key=data.field?['data-field',data.field]:data.pick?['data-pick',data.pick]:data.map?['data-map',data.map]:data.avatar?['data-avatar',data.avatar]:data.event?['data-event',data.event]:data.goal?['data-goal',data.goal]:data.building?['data-building',data.building]:data.tile?['data-tile',data.tile]:data.stage?['data-stage',data.stage]:data.action?['data-action',data.action]:data.mode?['data-mode',data.mode]:null;
+  const key=data.field?['data-field',data.field]:data.route?['data-route',data.route]:data.pick?['data-pick',data.pick]:data.map?['data-map',data.map]:data.avatar?['data-avatar',data.avatar]:data.event?['data-event',data.event]:data.goal?['data-goal',data.goal]:data.building?['data-building',data.building]:data.tile?['data-tile',data.tile]:data.stage?['data-stage',data.stage]:data.action?['data-action',data.action]:data.mode?['data-mode',data.mode]:null;
   if(!key)return null;
   return {key,selection:typeof el.selectionStart==='number'?[el.selectionStart,el.selectionEnd]:null};
 }
@@ -150,7 +139,7 @@ function restoreFocus(saved){
 // Text a student has typed but not yet saved lives only in the textarea. Carry it across
 // any re-render so a teammate's click can never wipe it.
 function collectDrafts(){
-  const drafts=new Map();
+  const drafts=new Map(answerDrafts);
   for(const el of document.querySelectorAll('[data-field]'))if(saveTimers.has(el.dataset.field)||document.activeElement===el)drafts.set(el.dataset.field,el.value);
   return drafts;
 }
@@ -161,7 +150,7 @@ function restoreDrafts(drafts){for(const [key,value] of drafts){const el=documen
 const holdsField=node=>node.nodeType===1&&(node.matches('[data-field]')||!!node.querySelector('[data-field]'));
 function morphNode(was,node){
   if(was.isEqualNode(node))return;
-  if(was.nodeType===1&&node.nodeType===1&&was.tagName===node.tagName&&holdsField(was)&&holdsField(node)){
+  if(was.nodeType===1&&node.nodeType===1&&was.tagName===node.tagName&&((holdsField(was)&&holdsField(node))||was.tagName==='BUTTON')){
     if(was.matches('[data-field]')){if(was.dataset.field===node.dataset.field){was.disabled=node.disabled;return}}
     else{
       for(const a of [...was.attributes])if(!node.hasAttribute(a.name))was.removeAttribute(a.name);
@@ -193,10 +182,11 @@ function render(options={}){
     document.documentElement.lang=lang;
     skipLink.textContent=L().skip;
     skipLink.hidden=!session;
-    app.innerHTML=!session?authPage():session.role==='teacher'?teacherPage():renderStudentView({team,roster,lang,L:L(),topbar:topbar(),sync,playing:scenePlaying,animate:options.stageChange&&!canViewTransition(),ui});
+    app.innerHTML=!session?authPage():session.role==='teacher'?teacherPage():renderGuidedView({team,roster,lang,L:L(),topbar:topbar(),sync,playing:scenePlaying,animate:options.stageChange&&!canViewTransition(),ui});
     shownKey=viewKey();
     restoreDrafts(drafts);updatePresence();restoreFocus(focus);
-    document.body.classList.toggle('drawer-open',!!ui.drawer&&session?.role==='student');
+    document.body.classList.remove('drawer-open');
+    if(session?.role==='student'){for(const b of app.querySelectorAll('button'))if(ui.busy)b.disabled=true;app.setAttribute('aria-busy',String(ui.busy));}
     if(options.stageChange){const main=document.querySelector('#main');if(main&&main.getBoundingClientRect().top<0)main.scrollIntoView({block:'start'})}
     celebrate(options.prev);
   };
@@ -228,6 +218,8 @@ function openDrawer(kind){ui.drawer=kind;patchDrawer();document.querySelector('.
 // Cards that open by themselves, once per student: arriving somewhere new, and meeting the
 // neighbours when the team reaches the society era with the meeting still undecided.
 function autoOverlays(prev){
+  if(session?.role==='student')return;
+
   const next=team.state;
   if(next.mapPoint&&prev?.mapPoint!==next.mapPoint&&!ui.seen.has('arrival:'+next.mapPoint)){ui.seen.add('arrival:'+next.mapPoint);ui.overlay='arrival';ui.result=null;return}
   if(next.stage===3&&pendingEvent(next)==='encounter'&&!ui.seen.has('encounter')){ui.seen.add('encounter');ui.overlay='event:encounter';ui.result=null}
@@ -336,12 +328,13 @@ async function renameSubmit(event){
 function action(payload){
   if(!team)return actionQueue;
   let next;
-  try{next=applyAction(team.state,payload)}catch(error){toast(error.message,'error');return actionQueue}
+  const request=['pick','place','trail','event','route','map'].includes(payload.type)?{...payload,expectedVersion:team.version}:payload;
+  try{next=applyAction(team.state,payload)}catch(error){toast(error.message,'error');return Promise.reject(error)}
   const before=team.state,quests=questStatus(before,submitted());
   if(payload.type==='map')preload(payload.point);
   pending.push(payload);
   team={...team,state:next};
-  if(payload.type==='event'){ui.overlay='event:'+payload.id;ui.result=payload.id}
+  if(payload.type==='event'){ui.eventResult=payload.id;}
   else if(payload.type==='map'&&ui.overlay==='atlas')ui.overlay=null;
   if(payload.type==='stage')ui.drawer=null;
   autoOverlays(before);
@@ -351,7 +344,7 @@ function action(payload){
   actionQueue=actionQueue.then(async()=>{
     try{
       await flushAll();
-      const data=await api('/api/team/action',payload);
+      const data=await api('/api/team/action',request);
       pending.splice(pending.indexOf(payload),1);
       roster=data.roster;
       const shown=team;adoptTeam(data.team);
@@ -359,27 +352,37 @@ function action(payload){
       if(JSON.stringify(shown.state)!==JSON.stringify(team.state))render({prev:shown.state,stageChange:team.state.stage!==shown.state.stage});
     }catch(error){
       pending.splice(pending.indexOf(payload),1);
+      if(error.team){adoptTeam(error.team);ui.reviewVersion=null;}
       const shown=team;team=projected();
       sync='saved';updateSync();toast(error.message,'error');
       if(JSON.stringify(shown.state)!==JSON.stringify(team.state))render({stageChange:team.state.stage!==shown.state.stage});
+      throw error;
     }
   });
-  return actionQueue;
+  const operation=actionQueue;actionQueue=operation.catch(()=>{});return operation;
 }
-function fieldInput(el){const key=el.dataset.field;const value=el.value;sync='saving';updateSync();clearTimeout(saveTimers.get(key));saveTimers.set(key,setTimeout(()=>saveField(key,value),650))}
-async function saveField(key,value){
-  saveTimers.delete(key);
-  try{
-    const hadPlace=!!team?.state?.placeAnswer?.trim();
-    const data=await api('/api/team/action',{type:'field',key,value});
-    adoptTeam(data.team);
-    roster=data.roster;if(!pending.length)sync='saved';updateSync();
-    if(key==='placeAnswer'&&hadPlace!==!!team.state.placeAnswer.trim()){render();if(pendingEvent(team.state)==='origin'&&!ui.seen.has('origin-ready')){ui.seen.add('origin-ready');toast(`! ${L().gbEventWaiting}`,'quest')}}
-    else updateSummary();
-  }catch(error){sync='offline';updateSync();toast(error.message,'error')}
+function fieldInput(el){const key=el.dataset.field;answerDrafts.set(key,el.value);sync='saving';updateSync();clearTimeout(saveTimers.get(key));saveTimers.set(key,setTimeout(()=>saveField(key,answerDrafts.get(key)).catch(()=>{}),650));}
+function saveField(key,value){
+  clearTimeout(saveTimers.get(key));saveTimers.delete(key);
+  const request=(savingFields.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{
+    try{
+      const data=await api('/api/team/action',{type:'field',key,value});adoptTeam(data.team);roster=data.roster;
+      if(answerDrafts.get(key)===value)answerDrafts.delete(key);
+      sync=answerDrafts.size?'saving':'saved';updateSync();
+      if(!ui.busy&&ui.task==='hub')render({full:true});
+    }catch(error){sync='offline';updateSync();toast(f(lang,'saveFailed'),'error');throw error;}
+  });
+  savingFields.set(key,request);
+  request.finally(()=>{if(savingFields.get(key)===request)savingFields.delete(key);}).catch(()=>{});
+  return request;
 }
-async function flushField(key){if(!saveTimers.has(key))return;clearTimeout(saveTimers.get(key));saveTimers.delete(key);const field=document.querySelector(`[data-field="${key}"]`);if(field)await saveField(key,field.value)}
-async function flushAll(){for(const key of [...saveTimers.keys()])await flushField(key)}
+async function flushField(key){if(answerDrafts.has(key))await saveField(key,answerDrafts.get(key));else if(savingFields.has(key))await savingFields.get(key);}
+async function flushAll(){
+  for(const timer of saveTimers.values())clearTimeout(timer);saveTimers.clear();
+  await Promise.all([...savingFields.values()]);
+  for(const [key,value] of [...answerDrafts])await saveField(key,value);
+}
+
 async function postPresence(field){if(presenceSent===field)return;presenceSent=field;try{await api('/api/team/presence',{field})}catch{}}
 
 async function onAction(el){
@@ -395,10 +398,10 @@ async function onAction(el){
     else if(id==='open-scene'){openOverlay('arrival')}
     else if(id==='open-atlas'){openOverlay('atlas')}
     else if(id==='close-overlay'){closeOverlay()}
-    else if(id==='logout'){await flushAll();await api('/api/logout',{});stream?.close();stream=null;session=null;team=null;serverTeam=null;pending=[];ui.drawer=null;ui.overlay=null;document.body.classList.remove('drawer-open');teacherDetail=null;teacherDetailId=null;presenceFields={};presenceSent=null;render()}
+    else if(id==='logout'){await flushAll();ui.task='hub';answerDrafts.clear();await api('/api/logout',{});stream?.close();stream=null;session=null;team=null;serverTeam=null;pending=[];ui.drawer=null;ui.overlay=null;document.body.classList.remove('drawer-open');teacherDetail=null;teacherDetailId=null;presenceFields={};presenceSent=null;render()}
     else if(id==='next'||id==='previous'){await action({type:'stage',stage:team.state.stage+(id==='next'?1:-1)})}
-    else if(id==='submit'){if(!confirm(L().submitConfirm))return;await actionQueue;await flushAll();const data=await api('/api/team/submit',{});adoptTeam(data.team);roster=data.roster;render();toast(L().submitted)}
-    else if(id==='print'){window.print()}
+    else if(id==='submit'){await actionQueue;await flushAll();const data=await api('/api/team/submit',{});adoptTeam(data.team);roster=data.roster;render();toast(L().submitted)}
+    else if(id==='print'){const review=document.querySelector('.route-review'),wasOpen=review?.open;if(review)review.open=true;try{window.print()}finally{if(review)review.open=wasOpen}}
     else if(id==='close-detail'){teacherDetail=null;teacherDetailId=null;patchTeacher()}
     else if(id.startsWith('review:')){
       teacherDetailId=Number(id.split(':')[1]);
@@ -450,11 +453,89 @@ function chooseEvent(id,choice){
   action({type:'event',id,choice});
 }
 
+async function navigateTask(task){
+  await flushAll();ui.task=task;ui.eventResult=null;ui.selected=null;ui.overlay=null;ui.drawer=null;
+  render({full:true,stageChange:true});document.querySelector('#task-title')?.focus({preventScroll:true});
+}
+async function advanceChapter(){const stage=progressStage(team.state);if(stage>team.state.stage)await action({type:'stage',stage});}
+function beginPlacement(id,pick=null){
+  ui.building=id;ui.pick=pick;let preview=team.state;
+  if(pick)preview=applyAction(preview,{type:'pick',tree:pick.tree,id,tile:null});
+  ui.site=Number.isInteger(preview.tiles?.[id])?preview.tiles[id]:suggestedSite(preview,id);
+  ui.task='placement';ui.reviewVersion=team.version;
+}
+function guidedClick(el){
+  const d=el.dataset;
+  if(!d.flow&&!d.pick&&!d.building&&!d.tile&&!d.event&&!d.route&&!d.map)return false;
+  if(ui.busy)return true;
+  ui.busy=true;
+  (async()=>{
+    try{
+      if(d.tile!==undefined){
+        const tile=Number(d.tile);
+        if(ui.task==='placement'){ui.site=tile;ui.reviewVersion=team.version;}
+        else if(ui.task==='trail'){ui.path=suggestTrail(team.state,tile)||[];ui.trailMode='add';ui.reviewVersion=team.version;}
+        else{ui.hover=tile;await navigateTask('assessment');}
+      }else if(d.building){
+        if(team.submittedAt)return;
+        if(ui.task==='trail'){ui.path=suggestTrail(team.state,team.state.tiles[d.building])||[];ui.reviewVersion=team.version;}
+        else beginPlacement(d.building);
+      }else if(d.pick){
+        await flushAll();const [tree,id]=d.pick.split(':');beginPlacement(id,team.state[tree].includes(id)?null:{tree,id});
+      }else if(d.map){
+        ui.busy=true;await flushAll();await action({type:'map',point:d.map});ui.task='arrival';
+      }else if(d.event){
+        ui.busy=true;await flushAll();const [id,choice]=d.event.split(':');
+        const before=team.state.events?.[id];
+        if(before&&before!==choice&&!confirm(L().noReset))return;
+        await action({type:'event',id,choice});ui.task='result';ui.eventResult=id;await advanceChapter();
+      }else if(d.route){
+        ui.busy=true;await flushAll();await advanceChapter();await action({type:'route',id:d.route});ui.task='routeCheck';
+      }else{
+        const cmd=d.flow;
+        if(cmd==='hub')await navigateTask('hub');
+        else if(cmd.startsWith('task:')){
+          const id=cmd.slice(5);if(!['facts','review','manage'].includes(id)&&!taskAvailable(id,team,ui.seen))throw new Error(f(lang,'needsEarlier'));
+          await navigateTask(id);
+        }else if(cmd==='finish'){
+          ui.busy=true;await flushAll();const task=ui.task;
+          if(['placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer'].includes(task)&&!team.state[task]?.trim())throw new Error(L().noAnswer);
+          if(task==='place'&&!team.state.mapPoint)throw new Error(f(lang,'place'));
+          if(task==='arrival')ui.seen.add('arrival:'+team.state.mapPoint);
+          if(['prep','services','routeCheck'].includes(task))ui.seen.add(task);
+          if(task==='route'&&!team.state.route)throw new Error(f(lang,'route'));
+          await advanceChapter();ui.task='hub';
+        }else if(cmd==='placement-back')await navigateTask(ui.pick?.tree||'manage');
+        else if(cmd==='confirm-placement'||cmd==='keep-plan'){
+          if(ui.reviewVersion!==team.version&&cmd==='confirm-placement'){ui.reviewVersion=team.version;throw new Error(f(lang,'updated'));}
+          ui.busy=true;await flushAll();
+          const payload=ui.pick?{type:'pick',...ui.pick,tile:cmd==='keep-plan'?null:ui.site}:{type:'place',id:ui.building,tile:ui.site};
+          await action(payload);ui.task='result';ui.eventResult=null;ui.pick=null;
+        }else if(cmd==='remove-development'){
+          ui.busy=true;await flushAll();const tree=team.state.tech.includes(ui.building)?'tech':'civic';
+          await action({type:'pick',tree,id:ui.building});ui.task=tree;ui.pick=null;
+        }else if(cmd.startsWith('move:')){await flushAll();beginPlacement(cmd.slice(5));}
+        else if(cmd==='manage')await navigateTask('manage');
+        else if(cmd==='trails'||cmd.startsWith('connect:')){
+          await flushAll();ui.task='trail';ui.trailMode='add';ui.path=cmd.startsWith('connect:')?suggestTrail(team.state,team.state.tiles[cmd.slice(8)])||[]:[];ui.reviewVersion=team.version;
+        }else if(cmd.startsWith('remove-edge:')){ui.path=cmd.slice(12).split(':').map(Number);ui.trailMode='remove';ui.reviewVersion=team.version;}
+        else if(cmd==='confirm-trail'){
+          if(ui.reviewVersion!==team.version){ui.reviewVersion=team.version;throw new Error(f(lang,'updated'));}
+          const error=trailError(team.state,ui.path,ui.trailMode==='remove');if(error)throw new Error(error);
+          ui.busy=true;await flushAll();await action({type:'trail',path:ui.path,mode:ui.trailMode});ui.task='result';ui.eventResult=null;
+        }
+      }
+    }catch(error){toast(error.message,'error');}
+    finally{ui.busy=false;render({full:true});if(!d.tile)document.querySelector('#task-title')?.focus({preventScroll:true});}
+  })();return true;
+}
+
 // Delegated once on the persistent shell, so patching part of the page can never leave a
 // stale listener behind or bind the same form twice.
 app.addEventListener('click',event=>{
-  const el=event.target.closest('[data-action],[data-mode],[data-stage],[data-map],[data-pick],[data-avatar],[data-event],[data-building],[data-tile],[data-goal]');
+  const el=event.target.closest('[data-flow],[data-action],[data-mode],[data-stage],[data-map],[data-pick],[data-avatar],[data-event],[data-building],[data-tile],[data-goal],[data-route]');
   if(!el||el.disabled)return;
+  if(session?.role==='student'&&document.querySelector('[data-guided]')&&guidedClick(el))return;
   if(el.dataset.building!==undefined){if(!submitted()){ui.selected=ui.selected===el.dataset.building?null:el.dataset.building;patchBoard()}return}
   if(el.dataset.tile!==undefined){
     const tile=Number(el.dataset.tile);
@@ -466,6 +547,7 @@ app.addEventListener('click',event=>{
   if(el.dataset.action!==undefined)onAction(el);
   else if(el.dataset.mode!==undefined){authMode=el.dataset.mode;render()}
   else if(el.dataset.stage!==undefined)action({type:'stage',stage:Number(el.dataset.stage)});
+  else if(el.dataset.route!==undefined)action({type:'route',id:el.dataset.route});
   else if(el.dataset.map!==undefined)action({type:'map',point:el.dataset.map});
   else if(el.dataset.pick!==undefined){const [tree,id]=el.dataset.pick.split(':');action({type:'pick',tree,id})}
   else if(el.dataset.event!==undefined){const [id,choice]=el.dataset.event.split(':');chooseEvent(id,choice)}
@@ -498,6 +580,7 @@ app.addEventListener('mouseover',event=>{
 });
 // SVG hexes and buildings are not <button>s, so give them the keys a button has.
 app.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&session?.role==='student'&&document.querySelector('[data-guided]')){if(!ui.busy)navigateTask('hub').catch(()=>{});return;}
   if(event.key==='Escape'){
     if(ui.selected){ui.selected=null;patchBoard();return}
     if(ui.overlay){closeOverlay();return}
@@ -506,7 +589,7 @@ app.addEventListener('keydown',event=>{
   const el=event.target;
   if((event.key==='Enter'||event.key===' ')&&el instanceof SVGElement&&(el.dataset.tile!==undefined||el.dataset.building!==undefined)){event.preventDefault();el.dispatchEvent(new MouseEvent('click',{bubbles:true}))}
 });
-app.addEventListener('focusout',event=>{const key=event.target.dataset?.field;if(key!==undefined){flushField(key);postPresence(null)}});
+app.addEventListener('focusout',event=>{const key=event.target.dataset?.field;if(key!==undefined){flushField(key).catch(()=>{});postPresence(null)}});
 
 // Paste and drop stay blocked for team answers; copying work out is allowed.
 // Sign-in credentials and join codes can be pasted. The classroom writing rule only

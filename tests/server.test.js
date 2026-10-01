@@ -7,6 +7,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
+import { cooperativeDemoPlan } from '../scripts/cooperative-demo.js';
+import { findRoute } from '../shared/strategy/logistics.js';
+import { resources, resourceTotal } from '../shared/strategy/resources.js';
+import { fitTiles, hexes } from '../shared/land.js';
+import { suggestTrail } from '../shared/layout.js';
 
 const dataDir=mkdtempSync(join(tmpdir(),'civ-test-'));
 process.env.DATA_DIR=dataDir;
@@ -75,6 +80,29 @@ async function openStream(cookie) {
   return stream;
 }
 const dataOf=frame=>JSON.parse(frame.slice(frame.indexOf('data: ')+6));
+
+test('classroom plans and atomic trails persist across devices, reject stale previews and lock on submission',limit,async()=>{
+ const teacher=(await request('/api/auth/teacher',{password:teacherPassword},undefined,{base:proxiedBase,headers:{'X-Forwarded-For':'192.0.2.240'}})).cookie,made=await makeTeam(teacher,'Layout test');
+ const a=(await joinTeam(made.code,'Layout A')).cookie,b=(await joinTeam(made.code,'Layout B')).cookie;
+ const act=async action=>{const response=await request('/api/team/action',action,a);assert.equal(response.status,200,JSON.stringify(response.data));return response.data.team;};
+ await act({type:'map',point:'E'});await act({type:'field',key:'placeAnswer',value:'A river plain.'});await act({type:'event',id:'origin',choice:'steward'});
+ let team=await act({type:'pick',tree:'tech',id:'pottery',tile:null});assert.equal(team.state.tiles.pottery,undefined);
+ team=await act({type:'pick',tree:'tech',id:'husbandry',tile:null});
+ const tile=fitTiles(team.state,'husbandry').find(i=>hexes[i].dist===2);
+ team=await act({type:'place',id:'husbandry',tile});const path=suggestTrail(team.state,tile),version=team.version;
+ const invalid=await request('/api/team/action',{type:'trail',mode:'add',path:[path[0],tile]},a);assert.equal(invalid.status,400);
+ assert.equal((await request('/api/me',undefined,b)).data.team.version,version,'invalid trail commits nothing');
+ team=await act({type:'trail',mode:'add',path,expectedVersion:version});
+ const stale=await request('/api/team/action',{type:'trail',mode:'remove',path,expectedVersion:version},b);assert.equal(stale.status,409);assert.deepEqual(stale.data.team.state.trails,team.state.trails);
+ const read=(await request('/api/me',undefined,b)).data.team;assert.deepEqual(read.state.trails,team.state.trails);assert.equal(read.state.tiles.pottery,undefined);
+ await act({type:'pick',tree:'civic',id:'laws',tile:null});await act({type:'event',id:'encounter',choice:'share'});
+ for(const key of ['techAnswer','societyAnswer','beliefAnswer','contactAnswer'])await act({type:'field',key,value:'We accept the map tradeoffs.'});
+ assert.equal((await request('/api/team/submit',{},a)).status,200);
+ assert.equal((await request('/api/team/action',{type:'trail',mode:'remove',path},b)).status,400);
+ const reviewed=(await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team;
+ assert.deepEqual(reviewed.state.trails,team.state.trails);assert(reviewed.state.plannedBuildings.includes('pottery'));assert(reviewed.submittedAt);
+ for(const route of ['/guided-view.js','/shared/layout.js','/shared/layout-report.js','/shared/flow.js','/shared/flow-copy.js'])assert.equal((await request(route)).status,200,route);
+});
 
 after(async()=>{
   // End the streams from both sides: an open event stream would otherwise keep
@@ -367,4 +395,98 @@ test('static assets are cached by content and compressed',limit,async()=>{
   const missing=await fetch(base+'/assets/nope.webp');
   assert.equal(missing.status,404);
   await missing.text();
+});
+
+test('classroom is the default and the experimental cooperative entrypoint is separate',limit,async()=>{
+  for(const path of ['/','/play','/classroom','/shared/routes.js','/cooperative.js','/cooperative-view.js','/cooperative-map.js','/cooperative-copy.js','/cooperative.css',...['index','hex','turn-manager','great-work','logistics','resources'].map(id=>'/shared/strategy/'+id+'.js')]){
+    const response=await fetch(base+path);assert.equal(response.status,200,path);
+    const text=await response.text();
+    if(path==='/')assert.match(text,/app\.js/);
+    if(path==='/play')assert.match(text,/cooperative\.js/);
+    if(path==='/classroom')assert.match(text,/app\.js/);
+  }
+});
+
+test('a final classroom route persists, reaches teammates and appears in teacher review',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Route Makers');
+  const a=(await joinTeam(made.code,'Route Alice')).cookie,b=(await joinTeam(made.code,'Route Ben')).cookie;
+  const live=await openStream(b);
+  assert.equal((await request('/api/team/action',{type:'route',id:'land'},a)).status,400);
+  const actions=[{type:'map',point:'A'},...['placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer'].map(key=>({type:'field',key,value:'Our team explanation'})),
+    {type:'event',id:'origin',choice:'explore'},...['mining','wheel'].map(id=>({type:'pick',tree:'tech',id})),
+    {type:'event',id:'encounter',choice:'exchange'},...['laws','trade'].map(id=>({type:'pick',tree:'civic',id})),{type:'stage',stage:4}];
+  for(const action of actions)assert.equal((await request('/api/team/action',action,a)).status,200);
+  assert.equal((await request('/api/team/action',{type:'route',id:'water'},a)).status,400);
+  assert.equal((await request('/api/team/action',{type:'route',id:'land'},a)).status,200);
+  const frame=await live.waitFor(frame=>frame.includes('"route":"land"'),'final route');
+  assert.equal(dataOf(frame).team.state.route,'land');
+  assert.equal((await request('/api/me',undefined,b)).data.team.state.route,'land');
+  assert.equal((await request('/api/team/submit',{},a)).status,200);
+  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.route,'land');
+  assert.equal((await request('/api/team/action',{type:'route',id:'local'},b)).status,400);
+  live.controller.abort();
+});
+
+test('world membership scopes actions and fog; stale actions return a fresh view',limit,async()=>{
+  const created=await request('/api/world/create',{}),host=created.cookie;
+  assert.equal(created.status,201);assert.equal(created.data.role,'host');
+  assert.equal(created.data.state.board['-1,-2'].fogged,true);
+  assert.equal((await request('/api/world/me')).status,401);
+  const joined=await request('/api/world/join',{code:created.data.code,playerId:'river'});
+  assert.equal(joined.status,200);assert.equal(joined.data.playerId,'river');
+  const foreignRead=await request('/api/world/me?player=highland',undefined,joined.cookie);
+  assert.equal(foreignRead.data.playerId,'river');
+  const forbidden=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},joined.cookie);
+  assert.equal(forbidden.status,403);
+  const acted=await request('/api/world/action',{playerId:'river',action:{actorId:'highland',type:'ready',expectedRevision:0}},joined.cookie);
+  assert.equal(acted.status,200);assert.equal(acted.data.state.players.river.ready,true);assert.equal(acted.data.state.players.highland.ready,false);
+  const stale=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},host);
+  assert.equal(stale.status,409);assert.equal(stale.data.state.revision,1);
+  assert.equal(stale.data.state.players.highland.ready,false);
+  const committed=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:1}},host);
+  assert.equal(committed.status,200);assert.equal(committed.data.state.clock.round,2);
+  const reloaded=await request('/api/world/me',undefined,host);
+  assert.equal(reloaded.data.code,created.data.code);assert.equal(reloaded.data.state.clock.round,2);
+  assert.equal(reloaded.data.state.players.highland.stock.food,7);
+});
+
+test('live world streams deliver only the joined civilization view',limit,async()=>{
+  const created=await request('/api/world/create',{}),joined=await request('/api/world/join',{code:created.data.code,playerId:'river'});
+  const controller=new AbortController(),decoder=new TextDecoder();
+  try{
+    const response=await fetch(base+'/api/world/events?player=highland',{headers:{Cookie:joined.cookie},signal:controller.signal});
+    assert.equal(response.status,200);const reader=response.body.getReader();
+    let initial='';while(!initial.includes('\n\n',initial.indexOf('event: world')))initial+=decoder.decode((await reader.read()).value,{stream:true});
+    assert.match(initial,/"playerId":"river"/);assert.match(initial,/"fogged":true/);
+    assert(!initial.includes('natural-wonder'));
+    await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},created.cookie);
+    let update='';while(!update.includes('"revision":1'))update+=decoder.decode((await reader.read()).value,{stream:true});
+    assert.match(update,/"ready":true/);assert.match(update,/"playerId":"river"/);
+  }finally{controller.abort();}
+});
+
+test('a complete twelve-turn cooperative game wins through the persisted HTTP API',limit,async()=>{
+  const created=await request('/api/world/create',{}),cookie=created.cookie;
+  let data=created.data;
+  async function action(playerId,payload){
+    data=(await request('/api/world/me?player='+playerId,undefined,cookie)).data;
+    if(['ship','contribute'].includes(payload.type)){
+      const target=payload.type==='ship'?data.state.players[payload.toPlayerId].settlement:data.state.work.site;
+      const path=findRoute(data.state.board,data.state.players[playerId].settlement,target,playerId,data.state.clock.round,data.state.logistics.edgeUsage,resourceTotal(resources(payload.cargo)));
+      payload={...payload,path};
+    }
+    const result=await request('/api/world/action',{playerId,action:{...payload,expectedRevision:data.state.revision}},cookie);
+    assert.equal(result.status,200,`turn ${data.state.clock.round} ${playerId} ${payload.type}: ${result.data.error??''}`);
+    data=result.data;
+  }
+  for(let round=1;round<=12;round++){
+    assert.equal(data.state.clock.round,round);
+    for(const [playerId,payload] of cooperativeDemoPlan[round]??[])await action(playerId,payload);
+    for(const playerId of ['highland','river'])await action(playerId,{type:'ready'});
+    if(data.state.phase==='assembly')for(const playerId of ['highland','river'])await action(playerId,{type:'vote',policy:'conserve'});
+  }
+  assert.equal(data.state.outcome.status,'won');assert.equal(data.state.ecosystem,96);
+  assert(Object.values(data.state.players).every(player=>player.health===3));
+  const resumed=await request('/api/world/me',undefined,cookie);
+  assert.equal(resumed.data.state.outcome.status,'won');
 });

@@ -1,7 +1,9 @@
 // Draws a team's homeland as an SVG hex map. Everything is markup with SVG attributes and
 // CSS classes: the page's CSP forbids inline styles.
-import { hexes, center, generateLand, improvements, terrains, settlementSize, fits, isRevealed, route, neighbourDirection, hazardOf, DIRECTIONS } from '/shared/land.js';
-import { iconPath } from '/rpg.js';
+import { hexes, center, generateLand, improvements, terrains, settlementSize, fits, isRevealed, route, neighbourDirection, hazardOf, DIRECTIONS } from '../shared/land.js';
+import { iconPath } from './rpg.js';
+import { routeById } from '../shared/routes.js';
+import { assessLayout, normalizeTrails } from '../shared/layout.js';
 
 const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const S=30,W=Math.sqrt(3)*S;
@@ -83,15 +85,20 @@ function eventLayer(state,land,L){
     if(encounter==='reserve')parts.push(`<circle class="ev-wall" r="27" transform="${move(center)}"/>`);
     parts.push(`<g class="ev-camp ${encounter?'met':'waiting'}" transform="translate(${camp[0]} ${camp[1]})"><title>${safe(L.gbNeighbours)}</title><circle class="ev-camp-ring" r="17"/><path class="ev-tents" d="M-11 7l6-11 6 11zM1 7l5-9 5 9z"/><path class="ev-flag" d="M-2-6v-10l7 3-7 3"/></g>`);
   }
+  const future=routeById(state.route);
+  if(future&&future.id!=='local'&&assessLayout(state).routes[future.id]?.operational){
+    const [dq,dr]=DIRECTIONS[neighbourDirection(state)],end=axial(dq*3.9,dr*3.9);
+    parts.push(`<g class="future-route future-${future.id}"><circle cx="${end[0]}" cy="${end[1]}" r="18"/><text x="${end[0]}" y="${end[1]+5}">${future.icon}</text></g>`);
+  }
   return `<g class="hx-events" aria-hidden="true">${parts.join('')}</g>`;
 }
 
 // mode 'play' is the interactive banner map; 'mini' is the read-only copy in the chronicle
 // and the teacher's review panel.
-export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false}={}){
+export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false,coverage=[],path=[]}={}){
   const land=generateLand(state.mapPoint);
   if(!land)return '';
-  const seen=i=>isRevealed(state,i),play=mode==='play',tiles=state.tiles||{};
+  const seen=i=>isRevealed(state,i),play=mode==='play',tiles=state.tiles||{},assessment=assessLayout(state);
   const terrainName=i=>terrains[land.tiles[i]][lang];
   const cells=hexes.map((hex,i)=>!seen(i)
     ?`<g class="hx hx-fog" data-hex="${i}" transform="${move(i)}"><polygon class="hx-base" points="${HEX}"/>${fogGlyph}</g>`
@@ -101,19 +108,21 @@ export function landMarkup(state,lang,L,{mode='play',selected=null,locked=false}
     const other=occupantOf(state,i);
     const target=selected&&(!other||other===selected)&&fits(land,selected,i);
     const cls=selected?(target?'fit':'blocked'):'';
-    return `<polygon class="hx-hit ${cls}" data-tile="${i}" points="${HEX}" transform="${move(i)}"${target&&!locked?` role="button" tabindex="0" aria-label="${safe(`${L.placeHere}: ${terrainName(i)}`)}"`:''}/>`;
+    return `<polygon class="hx-hit ${cls}" data-tile="${i}" points="${HEX}" transform="${move(i)}"${!locked?` role="button" tabindex="0" aria-label="${safe(`${selected?L.placeHere:L.landTitle}: ${terrainName(i)}`)}"`:''}/>`;
   }).join(''):'';
   const buildings=Object.entries(tiles).map(([id,i])=>{
     const name=improvements[id]?.name[lang]||id,label=`${name} · ${terrainName(i)}`;
     const interactive=play&&!locked;
-    return `<g class="hx-building ${selected===id?'selected':''}" data-building-at="${id}" transform="${move(i)}"${interactive?` data-building="${id}" role="button" tabindex="0" aria-label="${safe(`${L.moveBuilding}: ${label}`)}" aria-pressed="${selected===id}"`:''}><title>${safe(label)}</title><g class="hx-pin"><circle class="hx-medal" r="12.5"/><path class="hx-icon" transform="translate(-8 -8) scale(.5)" d="${iconPath(id)}"/></g></g>`;
+    return `<g class="hx-building ${selected===id?'selected':''} ${assessment.buildings[id]?.connected?'connected':'isolated'}" data-building-at="${id}" transform="${move(i)}"${interactive?` data-building="${id}" role="button" tabindex="0" aria-label="${safe(`${L.moveBuilding}: ${label}`)}" aria-pressed="${selected===id}"`:''}><title>${safe(label)}</title><g class="hx-pin"><circle class="hx-medal" r="12.5"/><path class="hx-icon" transform="translate(-8 -8) scale(.5)" d="${iconPath(id)}"/></g></g>`;
   }).join('');
   const size=settlementSize(state);
   const settlement=`<g class="hx-settlement size-${size}" transform="${move(center)}"><title>${safe(L.settlementStages[size])}</title>${town[size]}</g>`;
   const clouds=play?'<g class="hx-clouds" aria-hidden="true"><ellipse class="hx-cloud c1" cx="-120" cy="-90" rx="60" ry="18"/><ellipse class="hx-cloud c2" cx="40" cy="110" rx="75" ry="20"/></g>':'';
   // Room beyond the edge for the neighbouring camp.
   const box='-218 -192 436 384';
-  return `<svg class="hexmap ${mode} ${selected?'moving':''}" viewBox="${box}" role="group" aria-label="${safe(`${L.landTitle} · ${L.settlementStages[size]}`)}"><defs><filter id="hx-soft-${mode}"><feGaussianBlur stdDeviation="9"/></filter><clipPath id="hx-clip-${mode}">${hexes.map((_,i)=>`<polygon points="${HEX}" transform="${move(i)}"/>`).join('')}</clipPath><radialGradient id="hx-light-${mode}" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="#fff6dc" stop-opacity=".2"/><stop offset=".55" stop-color="#fff6dc" stop-opacity="0"/><stop offset="1" stop-color="#050b0e" stop-opacity=".4"/></radialGradient></defs><g class="hx-cells">${cells}</g><g class="hx-water">${riverPaths(land,seen)}</g><rect class="hx-light" x="-220" y="-195" width="440" height="390" fill="url(#hx-light-${mode})" clip-path="url(#hx-clip-${mode})"/><g class="hx-hits">${hits}</g>${eventLayer(state,land,L)}${settlement}<g class="hx-buildings">${buildings}</g>${clouds.replace(/class="hx-cloud/g,`filter="url(#hx-soft-${mode})" class="hx-cloud`)}</svg>`;
+  const paths=`<g class="layout-trails" aria-hidden="true">${normalizeTrails(state).map(([a,b])=>`<path d="${line([at(a),at(b)])}"/>`).join('')}</g>`;
+  const overlays=`<g class="layout-coverage" aria-hidden="true">${coverage.filter(i=>seen(i)).map(i=>`<polygon points="${INNER}" transform="${move(i)}"/>`).join('')}</g>${path.length>1?`<path class="layout-preview-path" d="${line(path.map(at))}" aria-hidden="true"/>`:''}<g class="layout-risk" aria-hidden="true">${assessment.season.atRisk.map(id=>`<circle r="18" transform="${move(tiles[id])}"/>`).join('')}</g>`;
+  return `<svg class="hexmap ${mode} ${selected?'moving':''}" viewBox="${box}" role="group" aria-label="${safe(`${L.landTitle} · ${L.settlementStages[size]}`)}"><defs><filter id="hx-soft-${mode}"><feGaussianBlur stdDeviation="9"/></filter><clipPath id="hx-clip-${mode}">${hexes.map((_,i)=>`<polygon points="${HEX}" transform="${move(i)}"/>`).join('')}</clipPath><radialGradient id="hx-light-${mode}" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="#fff6dc" stop-opacity=".2"/><stop offset=".55" stop-color="#fff6dc" stop-opacity="0"/><stop offset="1" stop-color="#050b0e" stop-opacity=".4"/></radialGradient></defs><g class="hx-cells">${cells}</g><g class="hx-water">${riverPaths(land,seen)}</g><rect class="hx-light" x="-220" y="-195" width="440" height="390" fill="url(#hx-light-${mode})" clip-path="url(#hx-clip-${mode})"/><g class="hx-hits">${hits}</g>${eventLayer(state,land,L)}${paths}${overlays}${settlement}<g class="hx-buildings">${buildings}</g>${clouds.replace(/class="hx-cloud/g,`filter="url(#hx-soft-${mode})" class="hx-cloud`)}</svg>`;
 }
 
 // What the side panel says about a hex: its land, what stands there, and which of the

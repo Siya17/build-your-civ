@@ -5,11 +5,20 @@ import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mapPoints, normalizeCode, isCodeShape, textFields } from '../shared/game.js';
-import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, sameHash, submitTeam, teamActivity, updateTeam } from './store.js';
+import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, sameHash, submitTeam, teamActivity, updateTeam, createWorld, joinWorld, getWorldAccess, worldPayload, updateWorld } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceFiles = {
+  '/guided-view.js':['public/guided-view.js','text/javascript; charset=utf-8'],
+
   '/':['public/index.html','text/html; charset=utf-8'],
+  '/play':['public/cooperative.html','text/html; charset=utf-8'],
+  '/classroom':['public/index.html','text/html; charset=utf-8'],
+  '/cooperative.js':['public/cooperative.js','text/javascript; charset=utf-8'],
+  '/cooperative-view.js':['public/cooperative-view.js','text/javascript; charset=utf-8'],
+  '/cooperative-map.js':['public/cooperative-map.js','text/javascript; charset=utf-8'],
+  '/cooperative-copy.js':['public/cooperative-copy.js','text/javascript; charset=utf-8'],
+  '/cooperative.css':['public/cooperative.css','text/css; charset=utf-8'],
   '/bootstrap.js':['public/bootstrap.js','text/javascript; charset=utf-8'],
   '/app.js':['public/app.js','text/javascript; charset=utf-8'],
   '/rpg.js':['public/rpg.js','text/javascript; charset=utf-8'],
@@ -19,6 +28,7 @@ const sourceFiles = {
   '/app.css':['public/app.css','text/css; charset=utf-8'],
   '/rpg.css':['public/rpg.css','text/css; charset=utf-8'],
   '/shared/game.js':['shared/game.js','text/javascript; charset=utf-8'],
+  '/shared/routes.js':['shared/routes.js','text/javascript; charset=utf-8'],
   '/shared/world.js':['shared/world.js','text/javascript; charset=utf-8'],
   '/shared/land.js':['shared/land.js','text/javascript; charset=utf-8'],
   '/shared/i18n.js':['shared/i18n.js','text/javascript; charset=utf-8'],
@@ -27,6 +37,8 @@ const sourceFiles = {
   '/assets/river-place.webp':['public/assets/river-place.webp','image/webp'],
   '/assets/meeting.webp':['public/assets/meeting.webp','image/webp']
 };
+for(const module of ['layout','layout-report','flow','flow-copy'])sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,'text/javascript; charset=utf-8'];
+for (const module of ['index', 'resources', 'hex', 'logistics', 'great-work', 'turn-manager']) sourceFiles[`/shared/strategy/${module}.js`]=[`shared/strategy/${module}.js`,'text/javascript; charset=utf-8'];
 for(const point of Object.keys(mapPoints)) {
   for(const folder of ['portraits','lands']) sourceFiles[`/assets/${folder}/${point}.webp`]=[`public/assets/${folder}/${point}.webp`,'image/webp'];
 }
@@ -139,7 +151,7 @@ const attemptWindow = 10*60_000;
 // A whole class often shares one NAT address, so the student allowance is generous;
 // a wrong code typed by 30 students must not lock the room out. Teacher sign-in stays
 // tight, with a global backstop in case the per-address key is being varied.
-const ceilings = {teacher:12,student:300};
+const ceilings = {teacher:12,student:300,world:40};
 function loginAllowed(req,kind,trustProxy) {
   const now=Date.now();
   if (kind==='teacher') {
@@ -168,6 +180,19 @@ function auth(req,role) {
   if (!session || (role && session.role!==role)) {const e=new Error('Sign in required');e.status=401;throw e;}
   return session;
 }
+const worldCookie = req => (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('civ_world='))?.slice(10);
+function worldAuth(req) {
+  const access = getWorldAccess(worldCookie(req));
+  if (!access) { const error = new Error('Start or join a world'); error.status = 401; throw error; }
+  return access;
+}
+function broadcastWorld(worldId) {
+  for (const client of [...clients]) {
+    if (client.role !== 'world' || client.access.worldId !== worldId) continue;
+    if (!getWorldAccess(client.token)) { dropClient(client); client.res.end(); continue; }
+    writeEvent(client, 'world', JSON.stringify(worldPayload(client.access, client.playerId)));
+  }
+}
 function checkOrigin(req) {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return;
   const origin=req.headers.origin;
@@ -190,8 +215,35 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     if (secureCookie) res.setHeader('Strict-Transport-Security','max-age=15552000');
-    try { const pathname=new URL(req.url,'http://localhost').pathname; checkOrigin(req);
+    try { const url=new URL(req.url,'http://localhost'), pathname=url.pathname; checkOrigin(req);
       if (req.method==='GET' && staticFiles.has(pathname)) { serveStatic(req,res,staticFiles.get(pathname)); return; }
+      const worldSetCookie = token => `civ_world=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secureCookie ? '; Secure' : ''}`;
+      if (pathname === '/api/world/create' && req.method === 'POST') {
+        await readJson(req);
+        if (!loginAllowed(req,'world',trustProxy)) { send(res,429,{error:'Too many new worlds. Try again later.'}); return; }
+        const { token } = createWorld();
+        send(res,201,worldPayload(getWorldAccess(token)),{'Set-Cookie':worldSetCookie(token)}); return;
+      }
+      if (pathname === '/api/world/join' && req.method === 'POST') {
+        if (!loginAllowed(req,'world',trustProxy)) { send(res,429,{error:'Too many join attempts. Try again later.'}); return; }
+        const body=await readJson(req), { token }=joinWorld(body.code,body.playerId);
+        send(res,200,worldPayload(getWorldAccess(token)),{'Set-Cookie':worldSetCookie(token)}); return;
+      }
+      if (pathname === '/api/world/me' && req.method === 'GET') { send(res,200,worldPayload(worldAuth(req),url.searchParams.get('player') || undefined)); return; }
+      if (pathname === '/api/world/action' && req.method === 'POST') {
+        const access=worldAuth(req), body=await readJson(req);
+        try { send(res,200,updateWorld(access,body.playerId,body.action)); broadcastWorld(access.worldId); }
+        catch (error) { if (error.status === 409) { send(res,409,{error:error.message,...worldPayload(access,body.playerId)}); return; } throw error; }
+        return;
+      }
+      if (pathname === '/api/world/events' && req.method === 'GET') {
+        const access=worldAuth(req), payload=worldPayload(access,url.searchParams.get('player') || undefined);
+        res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
+        res.write(': connected\n\n');
+        const client={res,role:'world',access,playerId:payload.playerId,token:worldCookie(req)};
+        client.keepalive=setInterval(()=>writeEvent(client,'ping','{}'),20_000); clients.add(client);
+        writeEvent(client,'world',JSON.stringify(payload)); req.on('close',()=>dropClient(client)); return;
+      }
       if (pathname==='/api/health' && req.method==='GET') {send(res,200,{ok:true});return;}
       if (pathname==='/api/me' && req.method==='GET') {
         const session=getSession(cookie(req));
@@ -247,7 +299,9 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       }
       if (pathname==='/api/team/action' && req.method==='POST') {
         const session=auth(req,'student');const action=await readJson(req);
-        const team=updateTeam(session.teamId,action,session.name);
+        let team;
+        try{team=updateTeam(session.teamId,action,session.name);}
+        catch(error){if(error.status===409){send(res,409,{error:error.message,team:getTeam(session.teamId),roster:liveNames(session.teamId,session.name)});return;}throw error;}
         send(res,200,{team,roster:liveNames(team.id,session.name),by:session.name});broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/team/submit' && req.method==='POST') {

@@ -1,5 +1,9 @@
 # Build Your Civ: cooperative strategy refactor
 
+> Earlier experimental design. The classroom now uses the independent four-step
+> flow described in `GAME_DESIGN.md`. The seasonal turn engine below is retained
+> for experimentation at `/play` and is not the default classroom experience.
+
 ## Current architecture and audit
 
 This repository is a bilingual classroom discussion game, not yet a numerical

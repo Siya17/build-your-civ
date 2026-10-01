@@ -1,4 +1,6 @@
 import { placeError, settleTiles } from './land.js';
+import { routeUnlocked } from './routes.js';
+import { trailError, normalizeTrails, edgeKey } from './layout.js';
 
 export const tech = [
   { id:'pottery', en:'Pottery', ja:'陶器', icon:'🏺', tier:0, parents:[], hint:'Store, cook, and carry food or water.' },
@@ -66,7 +68,7 @@ export function codeTag(name) {
 }
 
 export function initialState() {
-  return {stage:1,mapPoint:'',avatar:'',placeAnswer:'',techAnswer:'',societyAnswer:'',beliefAnswer:'',contactAnswer:'',tech:[],civic:[],events:{origin:'',encounter:''},tiles:{}};
+  return {stage:1,mapPoint:'',avatar:'',route:'',placeAnswer:'',techAnswer:'',societyAnswer:'',beliefAnswer:'',contactAnswer:'',tech:[],civic:[],events:{origin:'',encounter:''},tiles:{},trails:[],plannedBuildings:[]};
 }
 
 export const gateOpen = (item,state) => !item.gate || state.events?.[item.gate[0]]===item.gate[1];
@@ -92,7 +94,7 @@ export function questStatus(state,submitted=false){
 }
 
 export function applyAction(previous, action) {
-  const state = {...previous, avatar:Object.hasOwn(mapPoints,previous.mapPoint)?previous.mapPoint:'', tech:[...previous.tech], civic:[...previous.civic], events:{...previous.events}, tiles:{...previous.tiles}};
+  const state = {...previous, avatar:Object.hasOwn(mapPoints,previous.mapPoint)?previous.mapPoint:'', tech:[...previous.tech], civic:[...previous.civic], events:{...previous.events}, tiles:{...previous.tiles},trails:(previous.trails||[]).map(edge=>[...edge]),plannedBuildings:[...(previous.plannedBuildings||[])]};
   if (action?.type === 'stage') {
     const next = Number(action.stage);
     if (!Number.isInteger(next) || next < 1 || next > 4) throw new Error('Invalid stage');
@@ -100,7 +102,7 @@ export function applyAction(previous, action) {
   } else if (action?.type === 'map') {
     if (!Object.hasOwn(mapPoints, action.point)) throw new Error('Invalid map point');
     if (state.fixedPoint && action.point !== state.fixedPoint) throw new Error('Your teacher has set your homeland');
-    if (state.mapPoint !== action.point) state.tiles = {};
+    if (state.mapPoint !== action.point) {state.tiles = {};state.route = '';state.trails=[];}
     state.mapPoint = action.point;
     state.avatar = action.point;
   } else if (action?.type === 'avatar') {
@@ -153,15 +155,41 @@ export function applyAction(previous, action) {
       if (!gateOpen(item,state)) throw new Error('Resolve the matching event to unlock this development');
       if (item.parents.length && !item.parents.some(id => selected.has(id))) throw new Error('Choose a connected earlier development first');
       state[action.tree].push(item.id);
+      if(Object.hasOwn(action,'tile')) {
+        if(action.tile===null)state.plannedBuildings.push(item.id);
+        else {
+          const error=placeError(state,item.id,action.tile);
+          if(error)throw new Error(error);
+          state.tiles[item.id]=action.tile;
+        }
+      }
     }
+  } else if (action?.type === 'route') {
+    if (state.stage !== 4 || !questStatus(state).slice(0,3).every(Boolean)) throw new Error('Complete the first three steps before choosing a route');
+    if (!routeUnlocked(state, action.id)) throw new Error('Discover the required technology and civic before choosing this route');
+    state.route = action.id;
   } else if (action?.type === 'place') {
     const error = placeError(state, action.id, action.tile);
     if (error) throw new Error(error);
     state.tiles[action.id] = action.tile;
+    state.plannedBuildings=state.plannedBuildings.filter(id=>id!==action.id);
+  } else if (action?.type === 'trail') {
+    if(!['add','remove'].includes(action.mode))throw new Error('Choose whether to add or remove a trail');
+    const error=trailError(state,action.path,action.mode==='remove');
+    if(error)throw new Error(error);
+    const edges=new Map(normalizeTrails(state).map(([a,b])=>[edgeKey(a,b),[a,b]]));
+    for(let n=1;n<action.path.length;n++) {
+      const a=action.path[n-1],b=action.path[n],key=edgeKey(a,b);
+      if(action.mode==='add')edges.set(key,[Math.min(a,b),Math.max(a,b)]);else edges.delete(key);
+    }
+    state.trails=[...edges.values()];
   } else {
     throw new Error('Invalid action');
   }
+  if (state.route && !routeUnlocked(state, state.route)) state.route = '';
+  state.plannedBuildings=[...new Set(state.plannedBuildings)].filter(id=>state.tech.includes(id)||state.civic.includes(id));
   state.tiles = settleTiles(state);
+  state.trails=normalizeTrails(state);
   return state;
 }
 

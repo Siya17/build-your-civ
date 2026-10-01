@@ -9,6 +9,13 @@ export const INFRASTRUCTURE = Object.freeze({
 export const edgeKey = (a, b) => [a, b].sort().join('|');
 const capacity = tile => INFRASTRUCTURE[tile.infrastructure]?.capacity ?? (tile.structure === 'settlement' ? 6 : 0);
 
+export function routeCapacity(board,path,usage={}) {
+  return path.slice(1).map((to,i)=>{
+    const from=path[i],limit=Math.min(capacity(board[from]),capacity(board[to]));
+    return {from,to,limit,remaining:Math.max(0,limit-(usage[edgeKey(from,to)]??0))};
+  });
+}
+
 // Explicit paths let players commit scarce carrying capacity to a chosen route.
 // Capacity is shared in BOTH directions and resets only at the next round.
 export function reserveRoute(board, usage, path, from, to, cargo, actorId, round) {
@@ -33,7 +40,7 @@ export function reserveRoute(board, usage, path, from, to, cargo, actorId, round
 // Preview helper. The reducer still validates the supplied route authoritatively.
 export function findRoute(board, from, to, actorId, round, usage = {}, cargoSize = 1) {
   if (!Number.isSafeInteger(cargoSize) || cargoSize < 1) throw new Error('Invalid cargo size');
-  const usable = tile => tile && tile.exploredBy.includes(actorId) && capacity(tile) >= cargoSize && tile.disabledUntil < round;
+  const usable = tile => tile && tile.exploredBy?.includes(actorId) && capacity(tile) >= cargoSize && tile.disabledUntil < round;
   if (!usable(board[from]) || !usable(board[to])) return null;
   const queue = [[from]], visited = new Set([from]);
   for (let i = 0; i < queue.length; i++) {

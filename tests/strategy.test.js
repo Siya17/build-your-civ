@@ -82,6 +82,20 @@ test('one civilization action budget is shared by devices and rejects overspendi
   assert.throws(() => act(state, 'highland', { type: 'scout', tileId: '0,0' }), /No actions/);
 });
 
+test('research is permanent, spends knowledge and unlocks advanced construction',()=>{
+  let state=createSession();
+  assert.throws(()=>act(state,'highland',{type:'build',tileId:'-2,-1',structure:'workshop'}),/Research/);
+  assert.throws(()=>act(state,'highland',{type:'research',researchId:'masonry'}),/Insufficient/);
+  state.players.highland.stock.knowledge=3;
+  const learned=act(state,'highland',{type:'research',researchId:'masonry'});
+  assert.equal(learned.players.highland.stock.knowledge,0);
+  assert.deepEqual(learned.players.highland.research,['masonry']);
+  assert.throws(()=>act(learned,'highland',{type:'research',researchId:'masonry'}),/unlearned/);
+  const built=act(learned,'highland',{type:'build',tileId:'-2,-1',structure:'workshop'});
+  assert.equal(built.board['-2,-1'].structure,'workshop');
+  assert.deepEqual(state.players.highland.research,[]);
+});
+
 test('placements are permanent, cost resources, and cannot appropriate a partner tile', () => {
   const original = createSession();
   const state = act(original, 'highland', { type: 'build', tileId: '-2,-1', structure: 'archive' });
