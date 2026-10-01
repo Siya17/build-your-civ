@@ -1,56 +1,31 @@
-import { placeError, settleTiles } from './land.js';
-import { routeUnlocked } from './routes.js';
-import { trailError, normalizeTrails, edgeKey } from './layout.js';
+// The classroom rules from the Week 2 slides, shared by the browser and the server.
+// Prices (slide 18): ★ free = 0 points, normal = 1, △ hard = 2 points and a success roll,
+// ✗ impossible. Each tree has 7 points. Every arrow parent is required to unlock a card.
+// The event (slide 22) is one die roll per team; after it the trees are locked.
+// Dice are never rolled here unless the caller passes `rollDie` (the server does).
+import { tech, civic, trees, treeIds, cardById, treeOf, childrenOf, parentsMet, missingParents, prerequisiteIds } from './cards.js';
+import { regions, points } from './regions.js';
 
-export const tech = [
-  { id:'pottery', en:'Pottery', ja:'陶器', icon:'🏺', tier:0, parents:[], hint:'Store, cook, and carry food or water.' },
-  { id:'husbandry', en:'Animal Husbandry', ja:'畜産', icon:'🐑', tier:0, parents:[], hint:'Raise and care for animals.' },
-  { id:'mining', en:'Mining', ja:'採鉱', icon:'⛏️', tier:0, parents:[], hint:'Extract useful stone and metal.' },
-  { id:'sailing', en:'Sailing', ja:'帆走', icon:'⛵', tier:1, parents:['pottery'], hint:'Travel and trade by water.' },
-  { id:'astrology', en:'Astrology', ja:'占星術', icon:'☀️', tier:1, parents:['pottery'], hint:'Observe the sky and seasons.' },
-  { id:'irrigation', en:'Irrigation', ja:'灌漑', icon:'💧', tier:1, parents:['pottery'], hint:'Bring water to fields.' },
-  { id:'writing', en:'Writing', ja:'筆記', icon:'✍️', tier:1, parents:['pottery'], hint:'Record knowledge and agreements.' },
-  { id:'archery', en:'Archery', ja:'弓術', icon:'🏹', tier:1, parents:['husbandry'], hint:'Use bows for hunting or defense.' },
-  { id:'bronze', en:'Bronze Working', ja:'青銅器', icon:'⚒️', tier:1, parents:['mining'], hint:'Make metal tools and objects.' },
-  { id:'masonry', en:'Masonry', ja:'石工術', icon:'🧱', tier:2, parents:['mining'], hint:'Build with shaped stone.' },
-  { id:'wheel', en:'Wheel', ja:'車輪', icon:'🛞', tier:2, parents:['mining'], hint:'Move loads and make mechanisms.' },
-  { id:'shipbuilding', en:'Shipbuilding', ja:'造船', icon:'🚢', tier:2, parents:['sailing'], hint:'Construct vessels for longer journeys.' },
-  { id:'navigation', en:'Celestial Navigation', ja:'天文航法', icon:'⭐', tier:2, parents:['sailing','astrology'], hint:'Navigate using the stars.' },
-  { id:'currency', en:'Currency', ja:'通貨', icon:'🪙', tier:2, parents:['writing'], hint:'Create a shared means of exchange.' },
-  { id:'horseback', en:'Horseback Riding', ja:'騎乗', icon:'🐎', tier:2, parents:['archery'], hint:'Travel over land on horseback.' },
-  { id:'iron', en:'Iron Working', ja:'鉄器', icon:'🔩', tier:2, parents:['bronze'], hint:'Make stronger metal tools.' },
-  { id:'math', en:'Mathematics', ja:'数学', icon:'📐', tier:3, parents:['currency'], hint:'Measure and calculate.' },
-  { id:'construction', en:'Construction', ja:'建設', icon:'🏛️', tier:3, parents:['horseback','masonry'], hint:'Organize larger building projects.' },
-  { id:'engineering', en:'Engineering', ja:'工学', icon:'⚙️', tier:3, parents:['iron','wheel'], hint:'Design complex structures and systems.' },
-  { id:'preservation', en:'Preservation Methods', ja:'保存技術', icon:'🫙', tier:1, parents:[], gate:['origin','steward'], hint:'Protect food and materials for uncertain seasons.' },
-  { id:'route_mapping', en:'Route Mapping', ja:'道の地図作り', icon:'🧭', tier:1, parents:[], gate:['origin','explore'], hint:'Record paths between places.' }
-];
-export const civic = [
-  { id:'laws', en:'Code of Laws', ja:'法律の成文化', icon:'⚖️', tier:0, parents:[], hint:'Agree on shared rules.' },
-  { id:'craft', en:'Craftsmanship', ja:'手工業', icon:'🧵', tier:1, parents:['laws'], hint:'Develop specialized skills.' },
-  { id:'trade', en:'Foreign Trade', ja:'外国貿易', icon:'🤝', tier:1, parents:['laws'], hint:'Exchange with other communities.' },
-  { id:'workforce', en:'State Workforce', ja:'官吏組織', icon:'👥', tier:2, parents:['craft'], hint:'Coordinate work for shared projects.' },
-  { id:'tradition', en:'Military Tradition', ja:'軍事伝統', icon:'🛡️', tier:2, parents:['craft'], hint:'Develop organized defense practices.' },
-  { id:'empire', en:'Early Empire', ja:'初期帝国', icon:'🏙️', tier:2, parents:['trade'], hint:'Govern a wider network of places.' },
-  { id:'mysticism', en:'Mysticism', ja:'神秘主義', icon:'✨', tier:2, parents:['trade'], hint:'Explore spiritual ideas and rituals.' },
-  { id:'games', en:'Games and Recreation', ja:'娯楽と遊戯', icon:'🎲', tier:3, parents:['workforce'], hint:'Make time and space for play.' },
-  { id:'philosophy', en:'Political Philosophy', ja:'政治哲学', icon:'💬', tier:3, parents:['workforce','empire'], hint:'Debate how power should work.' },
-  { id:'poetry', en:'Drama and Poetry', ja:'演劇と詩', icon:'🎭', tier:3, parents:['empire'], hint:'Tell stories through performance.' },
-  { id:'training', en:'Military Training', ja:'軍事訓練', icon:'🎯', tier:4, parents:['tradition','games'], hint:'Practice organized defense.' },
-  { id:'defense', en:'Defensive Tactics', ja:'防御戦術', icon:'🏰', tier:4, parents:['games','philosophy'], hint:'Plan how to protect communities.' },
-  { id:'history', en:'Recorded History', ja:'記録された歴史', icon:'📜', tier:4, parents:['philosophy','poetry'], hint:'Preserve accounts of the past.' },
-  { id:'theology', en:'Theology', ja:'神学', icon:'🌙', tier:4, parents:['poetry','mysticism'], hint:'Develop ideas about belief.' },
-  { id:'mutual_aid', en:'Mutual Aid Pact', ja:'相互扶助の約束', icon:'🤲', tier:2, parents:[], gate:['encounter','share'], hint:'Agree to share supplies with neighbors.' },
-  { id:'resource_council', en:'Resource Council', ja:'資源評議会', icon:'🪵', tier:2, parents:[], gate:['encounter','reserve'], hint:'Plan how local supplies are protected and used.' },
-  { id:'trade_accord', en:'Trade Accord', ja:'交易協定', icon:'📦', tier:2, parents:[], gate:['encounter','exchange'], hint:'Agree on fair exchange across a new route.' },
-  { id:'route_stewards', en:'Route Stewards', ja:'道の管理者', icon:'🗺️', tier:2, parents:[], gate:['encounter','guard'], hint:'Set rules for safe travel and access.' }
-];
-
-export const trees = { tech, civic };
-export const textFields = ['placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer'];
-export const avatars = 'ABCDEFGHIJK'.split('');
-export const eventChoices = {origin:['steward','explore'],steward:['share','reserve'],explore:['exchange','guard']};
-export const mapPoints = {A:[16.8,61.5],B:[14.2,39.4],C:[19.2,42.1],D:[26.4,45.8],E:[34.2,52.6],F:[36.6,38.2],G:[15.9,48.8],H:[43.8,71],I:[71.2,46.7],J:[78.8,61.5],K:[85.5,19.9]};
+export { trees, treeIds, cardById, treeOf, points, parentsMet, missingParents, prerequisiteIds };
+export const BUDGET = 7;
+export const isPoint = point => typeof point === 'string' && Object.hasOwn(regions, point);
+export const textFields = ['eventAnswer','geographyAnswer','governmentAnswer','economyAnswer','beliefAnswer','shapeAnswer','notChosenAnswer'];
+export const writableFields = [...textFields, 'civName'];
+export const fieldLimit = key => key === 'civName' ? 40 : 600;
+// Each answer about government, economy and beliefs also needs a choice from its list.
+export const chipOptions = {
+  government:['elders','council','ruler','priests','assembly'],
+  economy:['farming','herding','fishing','hunting','trade','crafts','irrigation','markets'],
+  beliefs:['nature','ancestors','gods','sky','one','mystics','organized']
+};
+export const economyMax = 3;
+// Ordinary subsistence, local leadership and spirituality are possible without a
+// state or organised religion. Cards enable specialist institutions and practices.
+export const optionRequirements = {
+  government:{ elders:[], council:[], ruler:['empire','workforce'], priests:['mysticism'], assembly:['philosophy'] },
+  economy:{ farming:[], herding:['husbandry'], fishing:[], hunting:[], trade:['trade'], crafts:['craft'], irrigation:['irrigation'], markets:['currency'] },
+  beliefs:{ nature:[], ancestors:[], gods:[], sky:[], one:[], mystics:['mysticism'], organized:['theology'] }
+};
 
 // Join codes are the team's short name and a three-digit PIN, read aloud as "A-427".
 // Teams created before this keep their nine-character codes from the older alphabet.
@@ -67,136 +42,354 @@ export function codeTag(name) {
   return tag || 'TEAM';
 }
 
-export function initialState() {
-  return {stage:1,mapPoint:'',avatar:'',route:'',placeAnswer:'',techAnswer:'',societyAnswer:'',beliefAnswer:'',contactAnswer:'',tech:[],civic:[],events:{origin:'',encounter:''},tiles:{},trails:[],plannedBuildings:[]};
-}
+// ---- Prices -------------------------------------------------------------------------
+export const priceOf = (point, id) => regions[point]?.prices?.[id]?.[0] ?? 'normal';
+export const reasonOf = (point, id) => regions[point]?.prices?.[id]?.[1] ?? null;
+const points4 = { free:0, normal:1, hard:2, impossible:null };
+export const costOf = (point, id) => points4[priceOf(point, id)];
 
-export const gateOpen = (item,state) => !item.gate || state.events?.[item.gate[0]]===item.gate[1];
-export const hasCoreChoice = (state,kind) => state[kind].some(id=>trees[kind].some(item=>item.id===id&&!item.gate));
-const chosenValid = (items, selected, state) => {
-  const retained = new Set(selected.filter(id => {const item=items.find(x=>x.id===id);return item&&gateOpen(item,state)}));
-  let changed=true;
-  while(changed){
-    changed=false;
-    for(const item of items) if(retained.has(item.id)&&item.parents.length&&!item.parents.some(id=>retained.has(id))){retained.delete(item.id);changed=true}
-  }
-  return selected.filter(id=>retained.has(id));
+// ---- Errors -------------------------------------------------------------------------
+// Each refusal has a code the page can translate, and a plain English message for the API.
+export const errorText = {
+  locked:'Your cards are locked after the event roll.',
+  noPlace:'Choose your place first.',
+  unknownCard:'This card does not exist.',
+  alreadyChosen:'Your team already has this card.',
+  impossible:'This card is impossible in your place.',
+  needsParent:'First choose every card with an arrow to this one.',
+  overBudget:'There are not enough points left in this tree.',
+  notChosen:'Your team does not have this card.',
+  cascadeChanged:'Your team changed the tree. Look again before you remove this card.',
+  needsBothTrees:'Choose at least one card in each tree first.',
+  fixTrees:'Fix your trees before the event.',
+  treesChanged:'Your team changed the cards. Look again before you roll.',
+  alreadyRolled:'Your team has already rolled the die.',
+  noEvent:'Roll the die for the event first.',
+  choiceMade:'Your team has already made this choice.',
+  wrongChoice:'Choose trade or fight.',
+  stepDone:'Your team has already done this step.',
+  eventChanged:'Your team has already done this step. Look at the new result.',
+  cannotLose:'You can only lose a card at the end of a branch.',
+  cannotGain:'You cannot add this card now.',
+  badField:'This answer cannot be saved.',
+  tooLong:'This answer is too long.',
+  badChip:'This choice is not on the list.',
+  needsCapabilities:'This option needs working developments your team does not currently have.',
+  tooMany:'Choose up to three.',
+  fixedPlace:'Your teacher has set your place.',
+  placeLocked:'Your team has already started building here.',
+  badAction:'This action is not possible.',
+  noRoll:'This card does not need a roll.',
+  badDie:'The die gave an invalid number.'
 };
+function fail(code, status = 400) { return Object.assign(new Error(errorText[code] || code), { code, status }); }
 
-export function questStatus(state,submitted=false){
-  const filled=key=>!!String(state[key]??'').trim();
-  return [
-    !!(Object.hasOwn(mapPoints,state.mapPoint)&&filled('placeAnswer')&&state.events?.origin),
-    !!(hasCoreChoice(state,'tech')&&filled('techAnswer')),
-    !!(hasCoreChoice(state,'civic')&&filled('societyAnswer')&&filled('beliefAnswer')&&state.events?.encounter),
-    !!(submitted&&filled('contactAnswer'))
-  ];
+// ---- State --------------------------------------------------------------------------
+export function initialState() {
+  return { v:2, mapPoint:'', tech:[], civic:[], rolls:{}, event:null, civName:'', government:'', economy:[], beliefs:'', ...Object.fromEntries(textFields.map(key => [key,''])) };
 }
-
-export function applyAction(previous, action) {
-  const state = {...previous, avatar:Object.hasOwn(mapPoints,previous.mapPoint)?previous.mapPoint:'', tech:[...previous.tech], civic:[...previous.civic], events:{...previous.events}, tiles:{...previous.tiles},trails:(previous.trails||[]).map(edge=>[...edge]),plannedBuildings:[...(previous.plannedBuildings||[])]};
-  if (action?.type === 'stage') {
-    const next = Number(action.stage);
-    if (!Number.isInteger(next) || next < 1 || next > 4) throw new Error('Invalid stage');
-    state.stage = next;
-  } else if (action?.type === 'map') {
-    if (!Object.hasOwn(mapPoints, action.point)) throw new Error('Invalid map point');
-    if (state.fixedPoint && action.point !== state.fixedPoint) throw new Error('Your teacher has set your homeland');
-    if (state.mapPoint !== action.point) {state.tiles = {};state.route = '';state.trails=[];}
-    state.mapPoint = action.point;
-    state.avatar = action.point;
-  } else if (action?.type === 'avatar') {
-    if (!avatars.includes(action.id) || action.id !== state.mapPoint) throw new Error('Your team character belongs to your chosen location');
-    state.avatar = action.id;
-  } else if (action?.type === 'field') {
-    if (!textFields.includes(action.key) || typeof action.value !== 'string') throw new Error('Invalid field');
-    const max = 600;
-    if (action.value.length > max) throw new Error(`Answer is too long (max ${max} characters)`);
-    state[action.key] = action.value.replace(/\r/g,'');
-  } else if (action?.type === 'event') {
-    const events=state.events ||= {origin:'',encounter:''};
-    if(action.id==='origin'){
-      if(!state.mapPoint||!state.placeAnswer.trim()) throw new Error('Describe your place before this decision');
-      if(!eventChoices.origin.includes(action.choice)) throw new Error('Invalid event choice');
-      if(events.origin!==action.choice){
-        events.origin=action.choice;events.encounter='';
-        state.tech=chosenValid(tech,state.tech,state);
-        state.civic=chosenValid(civic,state.civic,state);
-      }
-    } else if(action.id==='encounter'){
-      if(!events.origin||!hasCoreChoice(state,'tech')) throw new Error('Choose a technology path first');
-      if(!eventChoices[events.origin].includes(action.choice)) throw new Error('Invalid event choice');
-      if(events.encounter!==action.choice){
-        events.encounter=action.choice;
-        state.civic=chosenValid(civic,state.civic,state);
-      }
-    } else throw new Error('Invalid event');
-  } else if (action?.type === 'pick') {
-    const items = trees[action.tree];
-    if (!items || !Array.isArray(state[action.tree])) throw new Error('Invalid tree');
-    const item = items.find(x => x.id === action.id);
-    if (!item) throw new Error('Invalid development');
-    const selected = new Set(state[action.tree]);
-    if(selected.has(item.id)&&Object.hasOwn(action,'tile')){
-      if(action.tile===null){delete state.tiles[item.id];state.plannedBuildings.push(item.id);}
-      else{const error=placeError(state,item.id,action.tile);if(error)throw new Error(error);state.tiles[item.id]=action.tile;state.plannedBuildings=state.plannedBuildings.filter(id=>id!==item.id);}
-    } else if (selected.has(item.id)) {
-      selected.delete(item.id);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const candidate of items) {
-          if (selected.has(candidate.id) && candidate.parents.length && !candidate.parents.some(id => selected.has(id))) {
-            selected.delete(candidate.id);
-            changed = true;
-          }
-        }
-      }
-      state[action.tree] = state[action.tree].filter(id => selected.has(id));
-    } else {
-      if (selected.size >= 7) throw new Error('The seven choice limit is reached');
-      if (!gateOpen(item,state)) throw new Error('Resolve the matching event to unlock this development');
-      if (item.parents.length && !item.parents.some(id => selected.has(id))) throw new Error('Choose a connected earlier development first');
-      state[action.tree].push(item.id);
-      if(Object.hasOwn(action,'tile')) {
-        if(action.tile===null)state.plannedBuildings.push(item.id);
-        else {
-          const error=placeError(state,item.id,action.tile);
-          if(error)throw new Error(error);
-          state.tiles[item.id]=action.tile;
-        }
-      }
-    }
-  } else if (action?.type === 'route') {
-    if (state.stage !== 4 || !questStatus(state).slice(0,3).every(Boolean)) throw new Error('Complete the first three steps before choosing a route');
-    if (!routeUnlocked(state, action.id)) throw new Error('Discover the required technology and civic before choosing this route');
-    state.route = action.id;
-  } else if (action?.type === 'place') {
-    const error = placeError(state, action.id, action.tile);
-    if (error) throw new Error(error);
-    state.tiles[action.id] = action.tile;
-    state.plannedBuildings=state.plannedBuildings.filter(id=>id!==action.id);
-  } else if (action?.type === 'trail') {
-    if(!['add','remove'].includes(action.mode))throw new Error('Choose whether to add or remove a trail');
-    const error=trailError(state,action.path,action.mode==='remove');
-    if(error)throw new Error(error);
-    const edges=new Map(normalizeTrails(state).map(([a,b])=>[edgeKey(a,b),[a,b]]));
-    for(let n=1;n<action.path.length;n++) {
-      const a=action.path[n-1],b=action.path[n],key=edgeKey(a,b);
-      if(action.mode==='add')edges.set(key,[Math.min(a,b),Math.max(a,b)]);else edges.delete(key);
-    }
-    state.trails=[...edges.values()];
-  } else {
-    throw new Error('Invalid action');
+const cardIn = (tree, id) => trees[tree].some(card => card.id === id);
+// Remove cards missing any required parent, until nothing changes.
+export function pruned(list) {
+  const kept = [...list];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const id of [...kept]) if (!parentsMet(kept, id)) { kept.splice(kept.indexOf(id), 1); changed = true; }
   }
-  if (state.route && !routeUnlocked(state, state.route)) state.route = '';
-  state.plannedBuildings=[...new Set(state.plannedBuildings)].filter(id=>state.tech.includes(id)||state.civic.includes(id));
-  state.tiles = settleTiles(state);
-  state.trails=normalizeTrails(state);
+  return kept;
+}
+const legacyKeys = ['placeAnswer','techAnswer','societyAnswer','contactAnswer','route'];
+
+// Every saved state passes through here: the server on read and write, and the page before
+// it applies a click. Old saves from the hex-map version keep their place, their valid
+// cards and their answers (in `legacy`); tiles, trails, routes and story events are dropped.
+export function normalizeState(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const state = initialState();
+  const old = src.v !== 2;
+  if (isPoint(src.fixedPoint)) state.fixedPoint = src.fixedPoint;
+  state.mapPoint = isPoint(src.mapPoint) ? src.mapPoint : (state.fixedPoint || '');
+  for (const tree of treeIds) {
+    let list = [...new Set((Array.isArray(src[tree]) ? src[tree] : []).filter(id => typeof id === 'string' && cardIn(tree, id)))];
+    if (old) list = list.filter(id => priceOf(state.mapPoint, id) !== 'impossible');
+    state[tree] = pruned(list);
+  }
+  for (const [id, value] of Object.entries(src.rolls && typeof src.rolls === 'object' ? src.rolls : {})) {
+    if (Object.hasOwn(cardById, id) && Number.isInteger(value) && value >= 1 && value <= 6) state.rolls[id] = value;
+  }
+  const event = src.event;
+  if (!old && event && typeof event === 'object' && Number.isInteger(event.roll) && event.roll >= 1 && event.roll <= 6) {
+    const ids = list => [...new Set((Array.isArray(list) ? list : []).filter(id => typeof id === 'string' && Object.hasOwn(cardById, id)))];
+    state.event = { roll:event.roll, choice:['trade','fight'].includes(event.choice) ? event.choice : '', lost:ids(event.lost), gained:ids(event.gained).filter(id => state[treeOf(id)].includes(id)) };
+  }
+  for (const key of writableFields) if (typeof src[key] === 'string') state[key] = src[key].replace(/\r/g,'').slice(0, fieldLimit(key));
+  if (chipOptions.government.includes(src.government)) state.government = src.government;
+  if (chipOptions.beliefs.includes(src.beliefs)) state.beliefs = src.beliefs;
+  if (Array.isArray(src.economy)) state.economy = [...new Set(src.economy.filter(value => chipOptions.economy.includes(value)))].slice(0, economyMax);
+  const legacy = {};
+  if (old) {
+    for (const key of legacyKeys) if (typeof src[key] === 'string' && src[key].trim()) legacy[key] = src[key].slice(0, 600);
+    for (const key of ['origin','encounter']) if (typeof src.events?.[key] === 'string' && src.events[key].trim()) legacy[key] = src.events[key].slice(0, 600);
+  } else if (src.legacy && typeof src.legacy === 'object') {
+    for (const [key, value] of Object.entries(src.legacy)) if ([...legacyKeys,'origin','encounter'].includes(key) && typeof value === 'string') legacy[key] = value.slice(0, 600);
+  }
+  if (Object.keys(legacy).length) state.legacy = legacy;
   return state;
 }
 
-export function submissionGaps(state) {
-  const needed = ['mapPoint','avatar','placeAnswer','tech','techAnswer','civic','societyAnswer','beliefAnswer','contactAnswer','origin','encounter'];
-  return needed.filter(key => key==='avatar' ? !Object.hasOwn(mapPoints,state.mapPoint) : key==='origin'||key==='encounter' ? !state.events?.[key] : key==='tech'||key==='civic' ? !hasCoreChoice(state,key) : !String(state[key] ?? '').trim());
+// ---- Reading a state ----------------------------------------------------------------
+export const has = (state, id) => state.tech.includes(id) || state.civic.includes(id);
+// Points spent in one tree. Cards gained in the event are free.
+export const spent = (state, tree) => state[tree].filter(id => !state.event?.gained.includes(id)).reduce((sum, id) => sum + (costOf(state.mapPoint, id) ?? 0), 0);
+// thrives (★), works, partly (△ rolled 1–2), rolling (△ not rolled yet).
+export function statusOf(state, id) {
+  const price = priceOf(state.mapPoint, id);
+  if (price === 'free') return 'thrives';
+  if (price !== 'hard') return 'works';
+  const roll = state.rolls[id];
+  return !roll ? 'rolling' : roll <= 2 ? 'partly' : 'works';
+}
+const working = (state, list, id) => list.includes(id) && priceOf(state.mapPoint,id) !== 'impossible' && ['thrives','works'].includes(statusOf(state, id));
+export const works = (state, id) => has(state,id) && priceOf(state.mapPoint,id) !== 'impossible' && ['thrives','works'].includes(statusOf(state,id));
+export function choiceStatus(state, key, value) {
+  const known = Object.hasOwn(optionRequirements,key) && Object.hasOwn(optionRequirements[key],value);
+  const requires = known ? [...optionRequirements[key][value]] : [];
+  const missing = requires.filter(id => !works(state,id));
+  return { available:known && missing.length === 0, requires, missing };
+}
+export const choiceOptions = (state, key) => (Object.hasOwn(chipOptions,key) ? chipOptions[key] : []).map(value => ({ value,...choiceStatus(state,key,value) }));
+export const availableChoiceValues = (state, key) => choiceOptions(state,key).filter(option => option.available).map(option => option.value);
+export const choicesValid = (state, key) => key === 'economy' ? state.economy.length > 0 && state.economy.every(value => choiceStatus(state,key,value).available) : choiceStatus(state,key,state[key]).available;
+// Minimum paid points from a fresh tree. Impossible ancestry stays impossible; paths
+// above 7 are advanced stretches. A free event gain can make some fit this round.
+export function minimumCost(point, id) {
+  if (!isPoint(point) || !Object.hasOwn(cardById,id)) return null;
+  const costs = [...prerequisiteIds(id),id].map(card => costOf(point,card));
+  return costs.includes(null) ? null : costs.reduce((sum,cost) => sum + cost,0);
+}
+export function pickBlocker(state, tree, id) {
+  if (state.event) return 'locked';
+  if (!state.mapPoint) return 'place';
+  if (!treeIds.includes(tree) || !cardIn(tree,id)) return 'unknown';
+  if (priceOf(state.mapPoint,id) === 'impossible') return 'impossible';
+  if (!parentsMet(state[tree],id)) return 'parent';
+  if (spent(state,tree) + costOf(state.mapPoint,id) > BUDGET) return 'budget';
+  return '';
+}
+// The trees as they were just before the event. The trees lock at the roll, so this is exact.
+export function before(state, tree) {
+  if (!state.event) return [...state[tree]];
+  const lost = state.event.lost.filter(id => treeOf(id) === tree);
+  return [...state[tree].filter(id => !state.event.gained.includes(id)), ...lost];
+}
+// Cards removed together with `id`: the card and everything missing a required parent.
+export function cascadeOf(state, tree, id) {
+  const rest = pruned(state[tree].filter(other => other !== id));
+  return state[tree].filter(other => !rest.includes(other));
+}
+// Cards at the end of a branch: removing them leaves every other card connected.
+export const removable = (state, tree) => state[tree].filter(id => cascadeOf(state, tree, id).length === 1);
+// Foreign Trade and every civic card that grows from it (slide 22, "Foreign Trade line").
+export const tradeLine = (() => { const line = ['trade']; for (let i = 0; i < line.length; i++) for (const child of childrenOf(line[i])) if (!line.includes(child.id)) line.push(child.id); return line; })();
+// Cards the event may add: not chosen, possible here, and with all prerequisites chosen.
+// On the trade line, at least one required arrow comes from that line itself.
+export function gainable(state, line) {
+  const options = [];
+  for (const tree of treeIds) for (const card of trees[tree]) {
+    if (has(state, card.id) || priceOf(state.mapPoint, card.id) === 'impossible' || !parentsMet(state[tree],card.id)) continue;
+    if (line === 'trade') {
+      if (!tradeLine.includes(card.id)) continue;
+      const ok = card.id === 'trade' ? state.civic.includes('laws') : card.parents.some(parent => tradeLine.includes(parent) && state.civic.includes(parent));
+      if (ok) options.push({ tree, id:card.id });
+    } else options.push({ tree, id:card.id });
+  }
+  return options;
+}
+// Problems that block the event roll: over budget, a ✗ card, or a △ card without its roll.
+export function treeIssues(state) {
+  const issues = [];
+  for (const tree of treeIds) {
+    if (spent(state, tree) > BUDGET) issues.push({ code:'overBudget', tree });
+    for (const id of state[tree]) {
+      if (priceOf(state.mapPoint, id) === 'impossible') issues.push({ code:'impossible', tree, id });
+      else if (statusOf(state, id) === 'rolling') issues.push({ code:'unrolled', tree, id });
+    }
+  }
+  return issues;
+}
+
+// What the event asks of the team now. `protectedBy` names the working card that stopped it.
+export function eventPlan(state) {
+  const event = state.event;
+  if (!event) return { kind:'roll', resolved:false };
+  const pre = { tech:before(state,'tech'), civic:before(state,'civic') };
+  const hadCard = id => pre.tech.includes(id) || pre.civic.includes(id);
+  const works = id => working(state, [...pre.tech, ...pre.civic], id);
+  const base = { roll:event.roll, protectedBy:'', count:0, remaining:0, options:[] };
+  let need = null;
+  switch (event.roll) {
+    case 1: if (hadCard('irrigation') && works('masonry')) base.protectedBy = 'masonry'; break;
+    case 2: if (works('construction')) base.protectedBy = 'construction'; else need = { kind:'lose', trees:['tech'], count:1 }; break;
+    case 3:
+      if (!event.choice) return { ...base, kind:'choose', resolved:false };
+      if (event.choice === 'trade') need = { kind:'gain', line:'trade', count:1 };
+      else if (works('archery')) base.protectedBy = 'archery';
+      else need = { kind:'lose', trees:['tech','civic'], count:1 };
+      break;
+    case 4: need = { kind:'lose', trees:['civic'], count:hadCard('trade') ? 2 : 1 }; break;
+    case 5: if (works('trade')) base.protectedBy = 'trade'; else need = { kind:'lose', trees:['tech'], count:1 }; break;
+    case 6: need = { kind:'gain', line:'any', count:1 }; break;
+  }
+  if (!need) return { ...base, kind:'none', resolved:true };
+  if (need.kind === 'lose') {
+    const options = need.trees.flatMap(tree => removable(state, tree).map(id => ({ tree, id })));
+    const remaining = options.length ? Math.max(0, need.count - event.lost.length) : 0;
+    return { ...base, kind:'lose', trees:need.trees, count:need.count, remaining, options, resolved:remaining === 0 };
+  }
+  const options = gainable(state, need.line);
+  const remaining = options.length ? Math.max(0, need.count - event.gained.length) : 0;
+  return { ...base, kind:'gain', line:need.line, count:need.count, remaining, options, resolved:remaining === 0 };
+}
+// What each Newcomers choice would do, shown before the team decides.
+export function previewChoice(state, choice) {
+  return eventPlan({ ...state, event:{ ...state.event, choice } });
+}
+
+// ---- Actions ------------------------------------------------------------------------
+// `rollDie` is only given by the server. Every check runs before the die is rolled, so the
+// page can test an action without it: a missing die throws an error marked `needsDie`.
+export function applyAction(previous, action, { rollDie } = {}) {
+  const state = normalizeState(previous);
+  const die = () => {
+    if (!rollDie) throw Object.assign(new Error('This needs a die roll from the server.'), { needsDie:true });
+    const value = rollDie();
+    if (!Number.isInteger(value) || value < 1 || value > 6) throw Object.assign(fail('badDie'), { status:500 });
+    return value;
+  };
+  const type = action?.type;
+  const cardFor = tree => {
+    if (!treeIds.includes(tree) || !cardIn(tree, action.id)) throw fail('unknownCard');
+    return cardById[action.id];
+  };
+  if (type === 'pick') {
+    if (state.event) throw fail('locked', 409);
+    if (!state.mapPoint) throw fail('noPlace');
+    const card = cardFor(action.tree);
+    if (has(state, card.id)) throw fail('alreadyChosen', 409);
+    const blocked = pickBlocker(state,action.tree,card.id);
+    if (blocked === 'impossible') throw fail('impossible');
+    if (blocked === 'parent') throw fail('needsParent');
+    if (blocked === 'budget') throw fail('overBudget');
+    if (priceOf(state.mapPoint, card.id) === 'hard' && !state.rolls[card.id]) state.rolls[card.id] = die();
+    state[action.tree].push(card.id);
+  } else if (type === 'unpick') {
+    if (state.event) throw fail('locked', 409);
+    const card = cardFor(action.tree);
+    if (!state[action.tree].includes(card.id)) throw fail('notChosen', 409);
+    const removed = cascadeOf(state, action.tree, card.id).filter(id => id !== card.id);
+    const expected = Array.isArray(action.cascade) ? action.cascade : [];
+    if (removed.length !== expected.length || removed.some(id => !expected.includes(id))) throw fail('cascadeChanged', 409);
+    state[action.tree] = state[action.tree].filter(id => id !== card.id && !removed.includes(id));
+  } else if (type === 'cardRoll') {
+    if (state.event) throw fail('locked', 409);
+    const tree = treeOf(action.id);
+    if (!tree || !state[tree].includes(action.id)) throw fail('notChosen', 409);
+    if (statusOf(state, action.id) !== 'rolling') throw fail('noRoll', 409);
+    state.rolls[action.id] = die();
+  } else if (type === 'eventRoll') {
+    if (state.event) throw fail('alreadyRolled', 409);
+    if (!state.mapPoint) throw fail('noPlace');
+    if (!state.tech.length || !state.civic.length) throw fail('needsBothTrees');
+    if (treeIssues(state).length) throw fail('fixTrees');
+    const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && b.every(id => a.includes(id));
+    if (!sameSet(action.confirm?.tech, state.tech) || !sameSet(action.confirm?.civic, state.civic)) throw fail('treesChanged', 409);
+    state.event = { roll:die(), choice:'', lost:[], gained:[] };
+    // Drought: Irrigation is lost at once, unless working Masonry built reservoirs.
+    if (state.event.roll === 1 && state.tech.includes('irrigation') && !working(state, state.tech, 'masonry')) {
+      const gone = cascadeOf(state, 'tech', 'irrigation');
+      state.tech = state.tech.filter(id => !gone.includes(id));
+      state.event.lost.push(...gone);
+    }
+  } else if (type === 'eventChoice') {
+    if (!state.event) throw fail('noEvent');
+    if (state.event.roll !== 3) throw fail('badAction');
+    if (!['trade','fight'].includes(action.choice)) throw fail('wrongChoice');
+    if (state.event.choice) throw fail('choiceMade', 409);
+    state.event.choice = action.choice;
+  } else if (type === 'eventLose' || type === 'eventGain') {
+    if (!state.event) throw fail('noEvent');
+    const plan = eventPlan(state), losing = type === 'eventLose';
+    if (plan.kind !== (losing ? 'lose' : 'gain') || !plan.remaining) throw fail('stepDone', 409);
+    if (action.index !== (losing ? state.event.lost : state.event.gained).length) throw fail('eventChanged', 409);
+    // Losses need only a card id: ids are unique across the two trees. Accept a tree
+    // supplied by the UI too, and reject it if it contradicts the allowed option.
+    const option = plan.options.find(option => option.id === action.id && (option.tree === action.tree || (losing && action.tree === undefined)));
+    if (!option) throw fail(losing ? 'cannotLose' : 'cannotGain');
+    if (losing) {
+      state[option.tree] = state[option.tree].filter(id => id !== action.id);
+      state.event.lost.push(action.id);
+      state.event.gained = state.event.gained.filter(id => id !== action.id);
+    } else {
+      if (priceOf(state.mapPoint, action.id) === 'hard' && !state.rolls[action.id]) state.rolls[action.id] = die();
+      state[action.tree].push(action.id);
+      state.event.gained.push(action.id);
+    }
+  } else if (type === 'field') {
+    if (!writableFields.includes(action.key) || typeof action.value !== 'string') throw fail('badField');
+    if (action.value.length > fieldLimit(action.key)) throw fail('tooLong');
+    state[action.key] = action.value.replace(/\r/g,'');
+  } else if (type === 'chip') {
+    if (!Object.hasOwn(chipOptions, action.key)) throw fail('badChip');
+    const options = chipOptions[action.key];
+    if (action.key === 'economy') {
+      if (!options.includes(action.value)) throw fail('badChip');
+      if (action.on !== undefined && typeof action.on !== 'boolean') throw fail('badChip');
+      const on = action.on !== false;
+      if (on && !choiceStatus(state,action.key,action.value).available) throw fail('needsCapabilities');
+      if (on && !state.economy.includes(action.value)) {
+        if (state.economy.length >= economyMax) throw fail('tooMany');
+        state.economy.push(action.value);
+      } else if (!on) state.economy = state.economy.filter(value => value !== action.value);
+    } else {
+      if (action.value !== '' && !options.includes(action.value)) throw fail('badChip');
+      if (action.value && !choiceStatus(state,action.key,action.value).available) throw fail('needsCapabilities');
+      state[action.key] = action.value;
+    }
+  } else if (type === 'map') {
+    if (!isPoint(action.point)) throw fail('badAction');
+    if (state.fixedPoint && action.point !== state.fixedPoint) throw fail('fixedPlace');
+    if (state.tech.length || state.civic.length || state.event) throw fail('placeLocked');
+    state.mapPoint = action.point;
+  } else {
+    throw fail('badAction');
+  }
+  return state;
+}
+
+// Check whether a valid action needs an authoritative roll. Validation errors still
+// throw so callers cannot mistake an invalid card or stale event for a dice action.
+export function needsDie(state, action) {
+  try { applyAction(state, action); }
+  catch (error) { if (error.needsDie) return true; throw error; }
+  return false;
+}
+
+// Required before the team can submit. The civilization name is optional.
+export function submissionGaps(raw) {
+  const state = normalizeState(raw);
+  const gaps = [];
+  if (!state.mapPoint) gaps.push('region');
+  if (!state.event) {
+    if (!state.tech.length) gaps.push('tech');
+    if (!state.civic.length) gaps.push('civic');
+    gaps.push('event');
+  } else if (!eventPlan(state).resolved) gaps.push('eventResolved');
+  for (const key of textFields) {
+    if (key === 'governmentAnswer' && !choicesValid(state,'government')) gaps.push('government');
+    if (key === 'economyAnswer' && !choicesValid(state,'economy')) gaps.push('economy');
+    if (key === 'beliefAnswer' && !choicesValid(state,'beliefs')) gaps.push('beliefs');
+    if (!state[key].trim()) gaps.push(key);
+  }
+  return gaps;
 }

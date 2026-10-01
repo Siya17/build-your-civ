@@ -1,77 +1,117 @@
-// The council's questions, written from the team's own land, buildings and decisions. The
-// five answers the teacher receives stay the same; only the wording meets the team where it is.
-import { trees } from '../shared/game.js';
-import { locations } from '../shared/world.js';
-import { generateLand, improvements, terrains, hazardOf, center } from '../shared/land.js';
-import { assessLayout } from '../shared/layout.js';
-import { f, ff } from '../shared/flow-copy.js';
-import { routeById } from '../shared/routes.js';
+// Argument scaffolds use the team's evidence without supplying a causal conclusion.
+import { regions } from '../shared/regions.js';
+import { cardById } from '../shared/cards.js';
+import { before } from '../shared/game.js';
+import { dictionary } from '../shared/i18n.js';
 
-export const fill=(template,values)=>String(template).replace(/\{(\w+)\}/g,(_,key)=>values[key]??'');
-const hazardKeys={flood:'Flood',drought:'Drought',storm:'Storm',frost:'Frost'};
-export const hazardPhrase=(state,L)=>L['hz'+hazardKeys[hazardOf(state.mapPoint)]]||'';
-export const seasonText=(state,L)=>L['season'+hazardKeys[hazardOf(state.mapPoint)]]||'';
-// English names sit mid-sentence, so they are lower-cased there; Japanese has no case.
-const inline=(text,lang)=>lang==='en'?text.toLowerCase():text;
-const terrainWord=(terrain,lang)=>inline(terrains[terrain][lang],lang);
-const cardTitle=(id,lang)=>[...trees.tech,...trees.civic].find(item=>item.id===id)?.[lang]||id;
-function placed(state,id,lang){
-  const land=generateLand(state.mapPoint),tile=state.tiles?.[id];
-  return land&&Number.isInteger(tile)?{building:inline(improvements[id].name[lang],lang),terrain:terrainWord(land.tiles[tile],lang)}:null;
-}
-function landWords(state,lang){
-  const land=generateLand(state.mapPoint);
-  if(!land)return null;
-  const counts={};
-  land.tiles.forEach((terrain,i)=>{if(i!==center)counts[terrain]=(counts[terrain]||0)+1});
-  const [a,b]=Object.entries(counts).sort((x,y)=>y[1]-x[1]).map(([terrain])=>terrainWord(terrain,lang));
-  return {a,b:b||a};
-}
-const belief=['mysticism','theology','poetry','history','games','tradition'];
+const plain = text => String(text ?? '').replace(/\[\[[a-z]+\|([^\]]+)\]\]/g,'$1').replace(/\[\[([a-z]+)\]\]/g,'$1').replace(/\{([^{}|]+)\|[^{}]+\}/g,'$1');
+const name = (id, lang) => id ? plain(cardById[id]?.[lang] ?? id) : '…';
 
-// Returns the question and a sentence starter for one answer field.
-function baseCouncilPrompt(key,state,lang,L){
-  const fallback={q:L[key],starter:L[key+'Ph']};
-  const place=locations[state.mapPoint]?.region[lang],hazard=hazardPhrase(state,L);
-  if(key==='placeAnswer'){
-    const words=landWords(state,lang);
-    if(!words)return fallback;
-    return {q:fill(L.prPlace,{place,land:fill(L.prLandMostly,words),hazard}),starter:fill(L.stPlace,{a:words.a,hazard})};
+export function starters(key, state, lang) {
+  const ja = lang === 'ja', L = dictionary[lang], region = regions[state.mapPoint];
+  if (!region) return [];
+  const place = plain(region.name[lang]);
+  const science = name(state.tech[0] ?? before(state, 'tech')[0], lang);
+  const society = name(state.civic[0] ?? before(state, 'civic')[0], lang);
+  const chip = (group, value) => value ? plain(L[`chips_${group}`][value] ?? value) : '…';
+  switch (key) {
+    case 'eventAnswer': {
+      const title = state.event ? plain(L[`event${state.event.roll}`]) : (ja ? 'イベント' : 'the event');
+      return ja ? [
+        `${title}への対応について、私たちの主張は…ということです。根拠は…です。`,
+        `${science}と${society}が結果につながるしくみは…です。`,
+        '負担が大きかったのは…という集団です。別の対応なら…'
+      ] : [
+        `Our claim about our response to ${title} is …; the evidence is …`,
+        `The mechanism linking ${science} and ${society} to the result is …`,
+        'The burden fell especially on …; a different response would …'
+      ];
+    }
+    case 'geographyAnswer': return ja ? [
+      `${place}では、…という制約が最も重要でした。なぜなら…`,
+      `資源の…が${science}の利用に影響し、それが制度の…に影響しました。`,
+      '同じ条件でも、…という選択が可能でした。違いを生むのは…'
+    ] : [
+      `In ${place}, the most important constraint was …, because …`,
+      `The resource … shaped our use of ${science}, which affected the institution … through …`,
+      'Under the same conditions, an alternative was …; the difference would come from …'
+    ];
+    case 'governmentAnswer': {
+      const government = chip('government', state.government);
+      return ja ? [
+        `${government}を選ぶ根拠は…です。${society}を具体的に使うと…`,
+        '協力を調整するには…が必要です。しかし、権限を持たない…は…',
+        '権力の乱用を抑える方法は…です。それにも…という限界があります。'
+      ] : [
+        `Our argument for ${government} is …; using ${society} in practice would …`,
+        'The coordination problem is …; people without authority may …',
+        'We would constrain abuses through …, although that safeguard could fail when …'
+      ];
+    }
+    case 'economyAnswer': {
+      const activities = state.economy.map(value => chip('economy', value)).join(ja ? '・' : ', ') || '…';
+      return ja ? [
+        `${activities}の優先順位について、私たちの主張は…です。資源とカードの根拠は…`,
+        '…を優先すると、…の利益は増えますが、…の負担も増えます。',
+        'イベントの結果は、この選択の…という弱点を示しました。'
+      ] : [
+        `Our priorities among ${activities} are …; resource and card evidence supports this because …`,
+        'Prioritizing … benefits … but places the cost on …',
+        'The event result exposed a vulnerability in this choice: …'
+      ];
+    }
+    case 'beliefAnswer': {
+      const beliefs = chip('beliefs', state.beliefs);
+      return ja ? [
+        `${beliefs}が協力に関わるしくみは…です。地域の…と${society}が根拠になります。`,
+        '人々が自発的に共有する意味は…ですが、強制になりうるのは…です。',
+        '別の集団にとって、この制度は…という意味を持つかもしれません。'
+      ] : [
+        `${beliefs} could affect cooperation through …; our local condition … and ${society} support this argument.`,
+        'A shared meaning people might accept is …; coercion could arise when …',
+        'For another group, the same institution might mean …'
+      ];
+    }
+    case 'shapeAnswer': return ja ? [
+      `${science}と${society}の関係について、私たちは…と主張します。`,
+      '…から…へつながるしくみは…です。',
+      '…という集団には、…という意図しない影響がありえます。この主張の限界は…'
+    ] : [
+      `We argue that ${science} and ${society} interact by …`,
+      'The causal steps connecting … to … are …',
+      'An unintended consequence for … could be …; our argument is limited by …'
+    ];
+    case 'notChosenAnswer': return ja ? [
+      '実現可能だった別案は…です。選ばなかった理由は、…との比較で…',
+      '選択によって失った利益は…であり、だれがそれを必要としたかというと…',
+      'もし…という条件が変われば、私たちは決定を変えます。なぜなら…'
+    ] : [
+      'A feasible alternative was …; we rejected it in comparison with … because …',
+      'The benefit we gave up was …, which mattered particularly to …',
+      'If … changed, we would reverse our decision because …'
+    ];
   }
-  if(key==='techAnswer'){
-    const core=state.tech.filter(id=>!trees.tech.find(item=>item.id===id)?.gate);
-    const id=[...core].reverse().find(card=>placed(state,card,lang))||core.at(-1);
-    if(!id)return fallback;
-    const where=placed(state,id,lang),card=cardTitle(id,lang);
-    return where?{q:fill(L.prTech,{card,...where}),starter:fill(L.stTech,where)}:{q:fill(L.prTechPlain,{card}),starter:L.techAnswerPh};
-  }
-  if(key==='societyAnswer'){
-    if(!state.civic.length)return fallback;
-    const names=state.civic.slice(-3).map(id=>cardTitle(id,lang));
-    return {q:fill(L.prSociety,{cards:names.join(lang==='ja'?'、':', ')}),starter:fill(L.stSociety,{card:names.at(-1)})};
-  }
-  if(key==='beliefAnswer'){
-    const id=[...state.civic].reverse().find(card=>belief.includes(card)&&placed(state,card,lang));
-    if(id){const where=placed(state,id,lang);return {q:fill(L.prBelief,where),starter:fill(L.stBelief,where)}}
-    return hazard?{q:fill(L.prBeliefPlain,{hazard}),starter:fill(L.stBeliefPlain,{hazard})}:fallback;
-  }
-  if(key==='contactAnswer'){
-    const choice=state.events?.encounter;
-    if(!choice)return fallback;
-    const name=L[choice+'Choice'];
-    return {q:fill(L.prContact,{choice:name}),starter:fill(L.stContact,{choice:name})};
-  }
-  return fallback;
+  return [];
 }
 
-export function councilPrompt(key,state,lang,L){
-  const prompt=baseCouncilPrompt(key,state,lang,L),a=assessLayout(state),add=text=>{prompt.q+=(lang==='ja'?'':' ')+text};
-  const quote=text=>lang==='en'?text.toLowerCase():text;
-  if(key==='techAnswer')add(ff(lang,'promptTech',{food:quote(f(lang,a.food.status)),season:quote(f(lang,a.season.status))}));
-  if(key==='societyAnswer')add(f(lang,'promptSociety'));
-  if(key==='contactAnswer'){
-    const route=routeById(state.route||'local');
-    add(route.id==='local'?f(lang,'promptContactLocal'):ff(lang,'promptContact',{route:route[lang],status:quote(f(lang,a.routes[route.id]?.operational?'operational':'routePlanned'))}));
+const words = {
+  en:{
+    eventAnswer:['[[resilience|resilience]]','[[vulnerability|vulnerability]]','[[distribution|distributional effects]]'],
+    geographyAnswer:['[[causation|causal mechanism]]','[[institution|institution]]','[[counterfactual|counterfactual]]'],
+    governmentAnswer:['[[coordination|coordination problem]]','[[legitimacy|legitimacy]]','[[coercion|coercion]]'],
+    economyAnswer:['[[tradeoff|tradeoff]]','[[specialization|specialization]]','[[surplus|surplus]]','[[distribution|distributional effects]]'],
+    beliefAnswer:['[[legitimacy|legitimacy]]','[[institution|institution]]','[[coercion|coercion]]'],
+    shapeAnswer:['[[causation|causal mechanism]]','[[maintenance|maintenance]]','[[contingency|contingency]]'],
+    notChosenAnswer:['[[opportunitycost|opportunity cost]]','[[counterfactual|counterfactual]]','[[contingency|contingency]]']
+  },
+  ja:{
+    eventAnswer:['[[resilience|回復力]]','[[vulnerability|脆弱性]]','[[distribution|分配への影響]]'],
+    geographyAnswer:['[[causation|因果のしくみ]]','[[institution|制度]]','[[counterfactual|反実仮想]]'],
+    governmentAnswer:['[[coordination|協力を調整する課題]]','[[legitimacy|正当性]]','[[coercion|強制]]'],
+    economyAnswer:['[[tradeoff|トレードオフ]]','[[specialization|専門化]]','[[surplus|余剰]]','[[distribution|分配への影響]]'],
+    beliefAnswer:['[[legitimacy|正当性]]','[[institution|制度]]','[[coercion|強制]]'],
+    shapeAnswer:['[[causation|因果のしくみ]]','[[maintenance|維持管理]]','[[contingency|偶有性]]'],
+    notChosenAnswer:['[[opportunitycost|機会費用]]','[[counterfactual|反実仮想]]','[[contingency|偶有性]]']
   }
-  return prompt;
-}
+};
+export const usefulWords = (key, lang) => words[lang]?.[key] ?? [];
