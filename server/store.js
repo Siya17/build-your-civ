@@ -38,8 +38,7 @@ const rulesChanged = raw => {
   const clean = normalizeState(raw);
   return ['tech','civic'].some(tree => JSON.stringify(raw[tree] || []) !== JSON.stringify(clean[tree]));
 };
-if (existingTables.has('worlds') || existingTables.has('world_access') ||
-    (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => oldState(savedState(row))))) {
+if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => oldState(savedState(row)))) {
   backupBeforeUpgrade();
 } else if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => rulesChanged(savedState(row)))) {
   backupBeforeUpgrade('pre-rules');
