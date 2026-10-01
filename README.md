@@ -1,25 +1,6 @@
 # Build Your Own Civilization
 
-A bilingual, shared classroom game for the Tama University Week 2 activity. The newer slide deck supplies the A–K map and contact question; the supplied science and civics flowcharts supply the development cards.
-
-## What it does
-
-- A new classroom starts with eleven teams, Team A to Team K. Each one begins at, and keeps, its own map point. The teacher can delete any team, bring missing letters back with "Add missing teams A–K", and create extra teams, which choose their own place.
-- Each team's join code is its short name and a three-digit PIN, e.g. `A-427` or `RIVERMAKER-315`. Students can type it in any case, with or without the dash. The teacher page shows every code at all times, and "New join code" replaces one. Codes from before this change still work.
-- Students sign in with the team code and their names. No university account integration is required.
-- Each team shares one character, chapter, set of choices, and five short answers. Live events update teammates’ screens.
-- A–K each open a distinct seven-second animated landscape and a bilingual, sourced geography card. Motion can be replayed or stopped.
-- Four quests and badges guide the team through two branching story events. Event choices unlock special development cards and show a possible benefit and tradeoff.
-- The science and society trees each permit seven choices, with prerequisites checked by the server. They are drawn as connected trees, and the chosen path lights up.
-- Each team has a hex homeland built from its map point: coast, rivers, mountains and deserts follow the geography card. Every chosen card raises a building on a fitting hex. Teams can move buildings, and pointing at a hex explains which buildings suit that land. Exploring outward and travel technologies clear the fog. The settlement grows from village to town to city. There is no score.
-- The default student screen is a guided four-step activity: know your place, discover technology, shape society, choose your future. Each team advances independently. The council holds the current step's objectives and short questions; the map shows its choices. There is no shared turn clock or resource management.
-- The final step offers local development, a caravan route, a water route, or a learning network. Outward routes unlock only when the team has a matching technology AND civic; each shows its prerequisites and tradeoff. Local development is always a valid finish. The teacher receives the chosen route with the existing answers.
-- Decisions show on the land. The place's hard season (flood, drought, storm or frost) is marked before the first decision. Protecting supplies lights the stores; mapping paths outward draws a route that clears the fog. In step 3 a neighbouring camp appears at the edge. The final route is drawn as a proposed connection.
-- Council questions and sentence starters are written from the team's own place, buildings, cards and decisions. The five answers the teacher receives are unchanged.
-- Clicks update the page immediately, and the server's answer confirms or rolls back the change. Only the changed parts of the page are redrawn.
-- A complete team can submit once. Submission locks editing until the teacher reopens it.
-- The teacher dashboard shows team progress, rosters, and submitted answers.
-- Text fields block browser paste, copy, cut, and drop. This is a classroom deterrent, not proof that every answer was typed; browser controls can be bypassed.
+A bilingual English/Japanese classroom activity for Tama University Week 2. Teams learn about one of eleven places, build Science and Society trees, adapt to a dice event, and present their choices before the teacher opens the historical reveal.
 
 ## Run locally
 
@@ -30,39 +11,84 @@ $env:TEACHER_PASSWORD = 'choose-a-long-private-password'
 npm run dev
 ```
 
-Open the URL printed in the terminal (usually [http://127.0.0.1:5173](http://127.0.0.1:5173)). If that port is occupied, stop the older server before restarting this one; two servers would split live updates between connected students. If no password is set in development, a temporary teacher password is printed in the terminal.
+Open the URL printed in the terminal, usually [http://127.0.0.1:5173](http://127.0.0.1:5173). Students and teachers use the same sign-in page. If no password is set in development, a temporary teacher password is printed in the terminal. Stop the previous server before starting another on the same classroom database.
 
-Run tests with `npm test`. The server stores activity data in `data/classroom.sqlite` and a local secret in `data/secret.key`. Back up the whole `data` directory after class. Do not commit or share it.
+Run the rules, content, flow and HTTP integration checks with `npm test`. Tests use a temporary database and include a 30-student classroom simulation.
 
-## Cooperative strategy engine
+## Classroom workflow
 
-The opt-in rules engine in `shared/strategy/` adds one fixed era, twelve seasonal
-rounds, paid permanent districts, adjacency yields, asymmetric civilizations,
-physical supply routes, ecosystem crises and a cooperative Winter Sanctuary.
-Run `npm run demo:coop` for a complete legal session. Its TypeScript contracts are
-in `shared/strategy/types.d.ts`; runtime code remains dependency-free JavaScript.
-See [COOPERATIVE_DESIGN.md](COOPERATIVE_DESIGN.md) for the repository audit, rules
-and the original integration roadmap. An experimental turn-based browser is kept
-separately at `/play`; `/` and `/classroom` serve the team-paced classroom activity.
-The experimental world data is separate from classroom teams and submissions.
+1. **Meet your place.** Read about its land, climate, resources, challenges and card prices. A new database starts with Team A through Team K, each fixed to its matching place. Extra teams may receive a region from the teacher or choose one before picking cards.
+2. **Build two trees.** Spend up to **7 points in each tree**, with at least one card in each. Follow the arrows: every listed parent must be chosen to meet a prerequisite. Free cards still need their prerequisites. Unused points are allowed.
+3. **Roll the event.** Confirm the team's cards, then roll once. Card editing locks at this point. Make any required event choice and card losses or gains.
+4. **Prepare and present.** Write seven short answers: adaptation to the event, geography and resources, government, economy, beliefs, how technology and culture shaped the society, and what the team did not choose. Select one government, one to three economic activities, and one belief. A civilization name is optional. Review and submit, then use the poster for a three-minute talk.
+5. **Compare with history.** The teacher opens the class-wide reveal when the class is ready. Students see a historical example for their region and compare its developments with their own choices.
+
+| Card symbol | Cost and effect |
+| --- | --- |
+| ★ | 0 points; thrives in this place |
+| ● / unmarked | 1 point; works |
+| △ | 2 points; the server rolls a die: 3–6 works, 1–2 partly works |
+| ✗ | Cannot be chosen in this place |
+
+A partly working card remains chosen and still unlocks its children, but it provides no event protection. Removing and re-adding a △ card reuses its original roll. Removing a prerequisite also removes any descendants left without another chosen parent; the student confirms that removal first.
+
+## The six events
+
+Protection is checked against the cards held before the event. A protective card must work fully.
+
+| Roll | Event | Rule |
+| --- | --- | --- |
+| 1 | Drought | Lose Irrigation unless Masonry works. Without Irrigation, nothing is lost. |
+| 2 | Great flood | Lose one Science card unless Construction works. |
+| 3 | Newcomers | Choose trade to gain one Foreign Trade line card, or fight. Working Archery protects a fight; otherwise lose one card from either tree. |
+| 4 | Epidemic | Lose one Society card, or two if the team had Foreign Trade, even when it only partly works. |
+| 5 | Worn-out soil | Lose one Science card unless Foreign Trade works. |
+| 6 | Good years | Gain one card from either tree. |
+
+Losses must come from the end of a branch, preserving every remaining card's prerequisites. Gains ignore the point budget and cost 0 points, but must be possible in the region and meet a prerequisite. A △ gain receives a server roll or reuses its saved roll. Required gains and losses stop when no eligible card remains. An Epidemic may leave Society empty without blocking submission.
+
+The Newcomers choice is final, and the screen previews both outcomes. The Foreign Trade line includes Foreign Trade and its descendants; the unlocking parent must also be in that line. Foreign Trade itself requires Code of Laws. For example, Political Philosophy unlocked only through State Workforce cannot be gained by trade. Having partly working Foreign Trade doubles the Epidemic loss but does not protect against Worn-out soil; this is the implemented interpretation of the supplied design.
+
+## Shared progress and teacher controls
+
+Students join with their team's code and their name, without a university account. Codes such as `A-427` accept case changes and punctuation; older join codes remain valid. The teacher can create teams, add missing A–K teams, replace join codes, review work and activity, print posters, delete teams, and reopen submissions.
+
+Each team's cards, rolls, event, selections and answers are shared through live updates. Reading screens and navigation belong to each device, so students can review without moving teammates. Late joiners can read the introductions or jump to their team's current task. Dice results are generated and saved by the server inside the same database transaction as the action. The browser never supplies a result.
+
+Answers save automatically and are limited to 600 characters each; the optional name is limited to 40. Failed saves retain local drafts. Submission requires all seven answers, the government/economy/belief selections, and a resolved event. A submitted team stays locked until the teacher reopens it. Answer boxes block browser paste and drop as a classroom deterrent; this does not prove that every answer was typed.
+
+The reveal setting persists across server restarts. Close it on the dashboard before the next class. Reconnecting students receive its current value immediately. Historical reveal content is bundled in browser JavaScript, so the gate controls the classroom screen sequence rather than keeping the material secret from developer tools.
+
+## Storage, deployment and older classrooms
+
+The default storage folder is `data/`, containing `classroom.sqlite` and `secret.key`. Keep the secret with its database: it is used to verify sessions and join codes. `DATA_DIR` selects another persistent directory; `HOST` and `PORT` select the listening address (defaults: `127.0.0.1:5173`). Production requires `NODE_ENV=production` and a `TEACHER_PASSWORD` of at least 12 characters. Serve production behind HTTPS because production session cookies are secure. Use one server process for a classroom so all students share its live event stream.
+
+Before upgrading an existing classroom, stop its server normally with Ctrl+C or SIGTERM. Shutdown checkpoints SQLite's write-ahead log. The updated server automatically creates a consistent database backup and copies its secret into `data/backups/pre-v2-<timestamp>-<suffix>/` before changing an older database or saved state. Keep regular backups of the whole data folder in another location too. Never copy only the database while the server is writing to it; an active `classroom.sqlite-wal` may hold the latest work. Do not commit or share classroom data or the secret.
+
+Older saved states are normalized on read and saved in the new `v:2` format on the next successful action. Core cards and valid places are retained; old special cards, map buildings, trails, routes and story events are removed. Old answers and decisions remain visible to the teacher under `legacy`; the previous belief answer is retained as the new belief answer. Old event rolls do not become new events. Existing database tables from the retired experimental world are left intact.
+
+Old teams may exceed the new budget or have △ cards without a stored roll. The event screen blocks until they remove excess cards or roll the outstanding cards. Regions now follow the supplied A–K classroom locations, so the teacher should review older teams whose geography meant something different. Previously submitted teams remain submitted; reopen them to finish the new questions and event. The retired `/play`, hex-map, route and cooperative-world interfaces are no longer served.
+
+## Content and attribution
+
+The supplied Week 2 slides define the A–K locations and event rules; the Science and Civics flowcharts supply the development cards. Slide 18 supplies only the Nile example: ★ Irrigation, ★ Sailing, △ Horseback. The existing prices for the other ten regions, and their geography explanations, were authored for this implementation. They are classroom assumptions for instructor review, rather than price tables transcribed from the slides. All unspecified cards cost 1 point. Edit `shared/regions.js` to revise a table; avoid changing prices during a class because saved teams may then become invalid or exceed their budgets.
+
+Climate charts are rounded modern station averages with a source label in each region. They provide geographic context, not a reconstruction of conditions at the historical reveal date. Region examples cover different historical periods. Card trees simplify development for discussion and do not claim a universal sequence or imply that geography determines a society's choices.
+
+Photos, resource examples and diagrams illustrate the material; some show comparable landscapes or materials outside the named region. Their author, license and original source page are recorded in `shared/credits.json` and the matching browser module `shared/credits.js`, and shown with images in the app. Preserve those credits when replacing assets. The world map uses NASA Blue Marble imagery; the Budj Bim channel diagram is an authored illustration with its source listed in the same manifest.
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| `public/` | Student and teacher interface, styles, generated artwork, slide map |
-| `shared/game.js` | Shared game content, branch rules, prerequisites, and validation |
-| `shared/routes.js` | Final route definitions, technology/civic requirements and unlock checks |
-| `shared/world.js` | Bilingual A–K geography cards, source links, characters, and outcomes |
-| `shared/land.js` | Homeland terrain per map point, buildings per card, fog of war and placement rules |
-| `public/hexmap.js` | SVG drawing of the homeland map and the story decisions on it |
-| `public/prompts.js` | Council questions and sentence starters written from the team's choices |
-| `server/http.js` | HTTP API, authentication, live event stream |
-| `server/store.js` | SQLite storage, sessions, submissions |
-| `tests/` | Game and 30-student integration tests |
-| `GAME_DESIGN.md` | RPG loop and classroom design notes |
-| `DEPLOYMENT.md` | Hosting and operations |
-
-## Source and asset notes
-
-The A–K world map comes from the supplied current Week 2 slides. Its pins indicate approximate broad areas, not exact historical sites. Each geography card links to the NASA Earth Observatory page supporting its physical-geography clues; those observations describe present-day landscapes, and past conditions could differ. The eleven original SVG motion scenes and four character portraits are stylized illustrations, not reconstructions of specific people or societies. Each scene runs as a seven-second muted CSS animation, with the same SVG as its still poster when motion is stopped or reduced motion is requested. The three older landscape images remain in the sign-in and teacher views. Flowchart paths are discussion prompts and do not claim one universal sequence of history. Where a card has multiple incoming arrows, any one earlier card unlocks it so paths remain possible within seven choices.
+| `shared/cards.js` | Core cards, tree structure and prerequisites |
+| `shared/regions.js` | Bilingual places, prices, climate, events and historical examples |
+| `shared/game.js` | Point budgets, normalization, actions, dice rules, event resolution and submission validation |
+| `shared/flow.js` | Device reading steps and shared team progression |
+| `shared/i18n.js`, `shared/glossary.js` | Bilingual interface and glossary text |
+| `shared/credits.json`, `shared/credits.js` | Asset attribution manifest and browser export |
+| `public/` | Student and teacher views, trees, poster, styles and image assets |
+| `server/http.js` | Authentication, action API and live event streams |
+| `server/store.js` | SQLite storage, migrations, sessions, submissions and reveal setting |
+| `server.mjs` | Startup, classroom seeding and graceful shutdown |
+| `tests/` | Shared rules, migration, flow, bilingual content and HTTP integration checks |

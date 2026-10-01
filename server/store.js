@@ -1,20 +1,50 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync, constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { applyAction, codeTag, initialState, isCodeShape, normalizeCode, submissionGaps, mapPoints } from '../shared/game.js';
-import { settleTiles } from '../shared/land.js';
-import { createSession as createWorldState, applySessionAction, sessionView } from '../shared/strategy/turn-manager.js';
-import { harvestForecast } from '../shared/strategy/hex.js';
+import { applyAction, codeTag, initialState, isCodeShape, isPoint, normalizeCode, normalizeState, points, submissionGaps } from '../shared/game.js';
 
 const dataDir = resolve(process.env.DATA_DIR || join(process.cwd(), 'data'));
 mkdirSync(dataDir, { recursive: true });
 const secretPath = join(dataDir, 'secret.key');
 if (!existsSync(secretPath)) writeFileSync(secretPath, randomBytes(32), { flag: 'wx', mode: 0o600 });
 const secret = readFileSync(secretPath);
-const db = new DatabaseSync(join(dataDir, 'classroom.sqlite'));
+const databasePath = join(dataDir, 'classroom.sqlite');
+const db = new DatabaseSync(databasePath);
+db.exec('PRAGMA busy_timeout=5000');
+
+// Before replacing an old saved shape, preserve a complete database and its join-code
+// secret. Checkpoint outside the transaction, then let SQLite make a consistent copy;
+// even a separate server writing just after the checkpoint cannot produce a torn backup.
+const upgradesBackedUp = new Set();
+function backupBeforeUpgrade(kind = 'pre-v2') {
+  if (upgradesBackedUp.has(kind)) return;
+  const checkpoint = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  if (checkpoint.busy) throw Object.assign(new Error('The classroom database is busy. Try again before upgrading saved teams.'), {status:503});
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const folder = join(dataDir, 'backups', `${kind}-${stamp}-${randomBytes(3).toString('hex')}`);
+  mkdirSync(folder, {recursive:true, mode:0o700});
+  db.prepare('VACUUM INTO ?').run(join(folder, 'classroom.sqlite'));
+  copyFileSync(secretPath, join(folder, 'secret.key'), constants.COPYFILE_EXCL);
+  upgradesBackedUp.add(kind);
+}
+const existingTables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
+const oldState = raw => !raw || typeof raw !== 'object' || raw.v !== 2;
+const savedState = row => JSON.parse(row.state_json);
+// Stricter prerequisites can invalidate a card picked under the former OR rule.
+// Preserve the raw v2 save before any later answer/action persists that cleanup.
+const rulesChanged = raw => {
+  if (oldState(raw)) return false;
+  const clean = normalizeState(raw);
+  return ['tech','civic'].some(tree => JSON.stringify(raw[tree] || []) !== JSON.stringify(clean[tree]));
+};
+if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => oldState(savedState(row)))) {
+  backupBeforeUpgrade();
+} else if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => rulesChanged(savedState(row)))) {
+  backupBeforeUpgrade('pre-rules');
+}
+
 db.exec(`PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS teams (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,18 +71,6 @@ CREATE TABLE IF NOT EXISTS activity_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS worlds (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  code TEXT NOT NULL UNIQUE,
-  state_json TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS world_access (
-  token_hash TEXT PRIMARY KEY,
-  world_id INTEGER NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK(role IN ('host','highland','river')),
-  expires_at INTEGER NOT NULL
-);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS log_team ON activity_log(team_id,id);`);
 
@@ -89,78 +107,10 @@ statements.expireSessions.run(Date.now());
 
 const hash = value => createHmac('sha256', secret).update(value).digest('hex');
 
-const worlds = {
-  create: db.prepare('INSERT INTO worlds (code,state_json,updated_at) VALUES (?,?,?)'),
-  byId: db.prepare('SELECT * FROM worlds WHERE id=?'),
-  byCode: db.prepare('SELECT * FROM worlds WHERE code=?'),
-  update: db.prepare('UPDATE worlds SET state_json=?,updated_at=? WHERE id=?'),
-  access: db.prepare('INSERT INTO world_access (token_hash,world_id,role,expires_at) VALUES (?,?,?,?)'),
-  authenticated: db.prepare('SELECT * FROM world_access WHERE token_hash=? AND expires_at>?'),
-  count: db.prepare('SELECT COUNT(*) AS count FROM worlds'),
-  prune: db.prepare('DELETE FROM worlds WHERE updated_at<?'),
-  expire: db.prepare('DELETE FROM world_access WHERE expires_at<?')
-};
-function worldToken(worldId, role) {
-  const token = randomBytes(32).toString('base64url');
-  worlds.access.run(hash(token), worldId, role, Date.now() + 7 * 86400_000);
-  return token;
-}
-export function createWorld() {
-  worlds.prune.run(Date.now() - 30 * 86400_000); worlds.expire.run(Date.now());
-  if (worlds.count.get().count >= 500) throw new Error('This classroom has reached its active world limit');
-  let code;
-  do { code = randomBytes(5).toString('hex').toUpperCase(); } while (worlds.byCode.get(code));
-  const result = worlds.create.run(code, JSON.stringify(createWorldState()), Date.now());
-  const id = Number(result.lastInsertRowid);
-  return { token: worldToken(id, 'host') };
-}
-export function joinWorld(code, role) {
-  if (!['highland', 'river'].includes(role)) throw new Error('Choose a civilization');
-  const normalized = String(code ?? '').replace(/[\s-]/g, '').toUpperCase();
-  const world = /^[A-F0-9]{10}$/.test(normalized) && worlds.byCode.get(normalized);
-  if (!world) throw new Error('World code not found');
-  return { token: worldToken(world.id, role) };
-}
-export function getWorldAccess(token) {
-  const access = token && worlds.authenticated.get(hash(token), Date.now());
-  return access ? { worldId: access.world_id, role: access.role } : null;
-}
-export function worldPayload(access, requestedPlayer) {
-  const row = worlds.byId.get(access.worldId);
-  if (!row) throw new Error('World not found');
-  const state = JSON.parse(row.state_json);
-  const playerId = access.role === 'host' ? requestedPlayer ?? 'highland' : access.role;
-  if (!Object.hasOwn(state.players, playerId)) throw new Error('Unknown civilization');
-  const forecasts = Object.fromEntries(Object.values(state.players).map(player => {
-    const amount = harvestForecast(state.board, player, state.clock.round,state.clock.season).yield;
-    return [player.id, amount];
-  }));
-  return { code: row.code, role: access.role, playerId, forecasts, state: sessionView(state, playerId) };
-}
-export function updateWorld(access, requestedPlayer, action) {
-  if (access.role !== 'host' && requestedPlayer && requestedPlayer !== access.role) {
-    const error = new Error('Your code controls only your civilization'); error.status = 403; throw error;
-  }
-  const actorId = access.role === 'host' ? requestedPlayer : access.role;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const row = worlds.byId.get(access.worldId);
-    if (!row) throw new Error('World not found');
-    const state = JSON.parse(row.state_json);
-    if (action?.expectedRevision !== state.revision) { const error = new Error('Another community acted. The board has refreshed; choose your action again.'); error.status = 409; throw error; }
-    const next = applySessionAction(state, { ...action, actorId });
-    worlds.update.run(JSON.stringify(next), Date.now(), row.id);
-    db.exec('COMMIT');
-    return worldPayload(access, actorId);
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-}
+// Saves from the older hex-map version are brought up to date as they are read.
 const rowTeam = row => {
   if(!row)return null;
-  const state=JSON.parse(row.state_json);
-  // Existing teams keep their work; the shared portrait now follows the map point.
-  state.avatar=Object.hasOwn(mapPoints,state.mapPoint)?state.mapPoint:'';
-  // Teams saved before the homeland map existed get their buildings laid out on load.
-  state.tiles=settleTiles(state);
+  const state=normalizeState(savedState(row));
   return {id:row.id,name:row.name,code:row.code||null,state,version:row.version,submittedAt:row.submitted_at,createdAt:row.created_at,updatedAt:row.updated_at};
 };
 const cleanName = name => String(name ?? '').trim().slice(0, 80);
@@ -176,8 +126,8 @@ function freshCode(name) {
 export function createTeam(name, point = '') {
   const clean = cleanName(name);
   if (!clean) throw new Error('Enter a team name');
-  if (point && !Object.hasOwn(mapPoints, point)) throw new Error('Invalid map point');
-  const state = point ? {...initialState(), mapPoint:point, avatar:point, fixedPoint:point} : initialState();
+  if (typeof point !== 'string' || (point && !isPoint(point))) throw new Error('Invalid map point');
+  const state = point ? {...initialState(), mapPoint:point, fixedPoint:point} : initialState();
   const { code, codeHash } = freshCode(clean);
   const result = statements.insertTeam.run(clean,codeHash,code,JSON.stringify(state));
   return getTeam(Number(result.lastInsertRowid));
@@ -187,7 +137,7 @@ export function createTeam(name, point = '') {
 // teacher can delete a team and bring it back later without duplicating the others.
 export function addLetterTeams() {
   const taken = new Set(listTeams().map(team => team.state.fixedPoint).filter(Boolean));
-  return Object.keys(mapPoints).filter(point => !taken.has(point)).map(point => createTeam(`Team ${point}`, point));
+  return points.filter(point => !taken.has(point)).map(point => createTeam(`Team ${point}`, point));
 }
 // The first time a classroom database opens, the A–K teams are already waiting.
 export function seedLetterTeams() {
@@ -242,14 +192,21 @@ export function pruneSessions() { return statements.expireSessions.run(Date.now(
 // BEGIN IMMEDIATE .. COMMIT is atomic here only because nothing between them awaits.
 // node:sqlite is synchronous, so the whole block runs in one turn of the event loop.
 // Introducing an await inside would let another request interleave mid-transaction.
-export function updateTeam(id, action, actor) {
+// The server rolls every die (rollDie), inside the transaction, so a roll is final.
+export function updateTeam(id, action, actor, rollDie = () => randomInt(1, 7)) {
+  const existing = statements.teamById.get(id);
+  if (existing) {
+    const raw = savedState(existing);
+    if (oldState(raw)) backupBeforeUpgrade();
+    else if (rulesChanged(raw)) backupBeforeUpgrade('pre-rules');
+  }
   db.exec('BEGIN IMMEDIATE');
   try {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
-    if (row.submitted_at) throw new Error('This team has already submitted. Ask the teacher to reopen it.');
+    if (row.submitted_at) throw Object.assign(new Error('This team has already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
     if(Object.hasOwn(action,'expectedVersion')&&action.expectedVersion!==row.version){const error=new Error('The team changed. Review the updated choice before confirming.');error.status=409;throw error;}
-    const next = applyAction(JSON.parse(row.state_json), action);
+    const next = applyAction(normalizeState(savedState(row)), action, {rollDie});
     statements.setState.run(JSON.stringify(next),id);
     statements.insertLog.run(id,actor,action.type);
     db.exec('COMMIT');
@@ -261,8 +218,8 @@ export function submitTeam(id, actor) {
   try {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
-    if (row.submitted_at) throw new Error('Already submitted');
-    const gaps = submissionGaps(JSON.parse(row.state_json));
+    if (row.submitted_at) throw Object.assign(new Error('Already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
+    const gaps = submissionGaps(normalizeState(savedState(row)));
     if (gaps.length) { const error = new Error('Complete the required sections before submitting'); error.gaps=gaps; throw error; }
     statements.markSubmitted.run(id);
     statements.insertLog.run(id,actor,'submit');
@@ -275,6 +232,10 @@ export function reopenTeam(id) {
   statements.insertLog.run(id,'Teacher','reopen');
   return getTeam(id);
 }
+
+// The teacher opens "what really happened" for the whole class at once.
+export function revealOpen() { return statements.getSetting.get('reveal')?.value === '1'; }
+export function setReveal(open) { statements.putSetting.run('reveal', open ? '1' : '0'); return revealOpen(); }
 
 // Everyone who signed in with this team's code and still holds a valid session.
 // This is an attendance list, not a presence list: a student who closed the tab

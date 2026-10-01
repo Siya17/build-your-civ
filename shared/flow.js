@@ -1,18 +1,108 @@
-import { hasCoreChoice, questStatus } from './game.js';
-export const taskDefinitions=[['place',1],['arrival',1],['placeAnswer',1],['origin',1],['tech',2],['prep',2],['techAnswer',2],['encounter',3],['civic',3],['services',3],['societyAnswer',3],['beliefAnswer',3],['route',4],['routeCheck',4],['contactAnswer',4],['submission',4]].map(([id,stage])=>({id,stage}));
-export function taskDone(id,team,seen=new Set()) {
- const s=team.state,filled=key=>!!s[key]?.trim();
- if(id==='place')return !!s.mapPoint;
- if(id==='arrival')return seen.has('arrival:'+s.mapPoint)||filled('placeAnswer');
- if(id==='origin'||id==='encounter')return !!s.events?.[id];
- if(id==='tech'||id==='civic')return hasCoreChoice(s,id);
- if(id==='prep')return seen.has('prep')||filled('techAnswer');
- if(id==='services')return seen.has('services')||filled('societyAnswer');
- if(id==='route')return !!s.route||filled('contactAnswer');
- if(id==='routeCheck')return seen.has('routeCheck')||filled('contactAnswer');
- if(id==='submission')return !!team.submittedAt;
- return filled(id);
+// The student path: one task per screen, in this order. "seen" steps are reading screens
+// remembered on this device; "team" steps are done when the shared team state says so.
+import { eventPlan, textFields, treeIssues, writableFields, choicesValid } from './game.js';
+
+export const chapters = ['start','place','tech','civic','event','talk','present','reveal'];
+export const steps = [
+  ['intro1','start','seen'], ['intro2','start','seen'], ['intro3','start','seen'],
+  ['choosePlace','place','team'], ['where','place','seen'], ['land','place','seen'], ['climate','place','seen'],
+  ['resources','place','seen'], ['challenge','place','seen'], ['prices','place','seen'],
+  ['techIntro','tech','seen'], ['techTree','tech','team'], ['techReview','tech','seen'],
+  ['civicIntro','civic','seen'], ['civicTree','civic','team'], ['civicReview','civic','seen'],
+  ['eventRoll','event','team'], ['eventCard','event','seen'], ['eventResolve','event','team'], ['eventResult','event','seen'], ['eventAnswer','event','team'],
+  ['civName','talk','seen'], ['geographyAnswer','talk','team'], ['government','talk','team'], ['economy','talk','team'], ['beliefs','talk','team'],
+  ['shapeAnswer','talk','team'], ['notChosenAnswer','talk','team'], ['check','talk','seen'], ['submit','talk','team'],
+  ['poster','present','seen'], ['wait','present','team'],
+  ['revealPlace','reveal','seen'], ['revealCompare','reveal','seen'], ['takeaway','reveal','seen']
+].map(([id, chapter, kind]) => ({ id, chapter, kind }));
+export const stepById = Object.fromEntries(steps.map(step => [step.id, step]));
+// The writing step for each answer field (government, economy and beliefs carry chips too).
+export const fieldStep = { eventAnswer:'eventAnswer', geographyAnswer:'geographyAnswer', governmentAnswer:'government', economyAnswer:'economy', beliefAnswer:'beliefs', shapeAnswer:'shapeAnswer', notChosenAnswer:'notChosenAnswer', civName:'civName' };
+export const stepField = Object.fromEntries(Object.entries(fieldStep).map(([field, step]) => [step, field]));
+const talkIndex = steps.findIndex(step => step.id === 'submit');
+
+const filled = (state, key) => !!String(state[key] ?? '').trim();
+// Shared milestones never depend on what one student's device has read. An event may
+// empty a tree, so the roll also records that both trees were ready beforehand.
+export function teamMilestones(team) {
+  const state = team.state;
+  const issues = treeIssues(state);
+  return {
+    region:!!state.mapPoint,
+    tech:!!state.event || (state.tech.length > 0 && !issues.some(issue => issue.tree === 'tech')),
+    civic:!!state.event || (state.civic.length > 0 && !issues.some(issue => issue.tree === 'civic')),
+    event:!!state.event,
+    eventResolved:!!state.event && eventPlan(state).resolved,
+    eventAnswer:filled(state, 'eventAnswer'),
+    geographyAnswer:filled(state, 'geographyAnswer'),
+    government:choicesValid(state,'government') && filled(state, 'governmentAnswer'),
+    economy:choicesValid(state,'economy') && filled(state, 'economyAnswer'),
+    beliefs:choicesValid(state,'beliefs') && filled(state, 'beliefAnswer'),
+    shapeAnswer:filled(state, 'shapeAnswer'),
+    notChosenAnswer:filled(state, 'notChosenAnswer'),
+    submitted:!!team.submittedAt
+  };
 }
-export function nextTask(team,seen=new Set()) { return taskDefinitions.find(task=>!taskDone(task.id,team,seen))??taskDefinitions.at(-1); }
-export function taskAvailable(id,team,seen=new Set()) {const index=taskDefinitions.findIndex(t=>t.id===id);return index>=0&&taskDefinitions.slice(0,index).every(t=>taskDone(t.id,team,seen));}
-export function progressStage(state) {const q=questStatus(state);return q[0]?q[1]?q[2]?4:3:2:1;}
+// Steps that do not apply to this team are skipped entirely.
+export function stepApplies(id, team) {
+  const state = team.state;
+  if (id === 'choosePlace') return !state.fixedPoint;
+  if (['eventCard','eventResult','eventResolve'].includes(id) && !state.event) return false;
+  if (id === 'eventResolve') {
+    const plan = eventPlan(state);
+    return state.event.roll !== 1 && !plan.protectedBy;
+  }
+  return true;
+}
+export function stepDone(id, team, seen = new Set(), reveal = false) {
+  const state = team.state, index = steps.findIndex(step => step.id === id);
+  if (id === 'choosePlace') return !!state.mapPoint;
+  // Old submitted saves have no event in the new rules. They must wait here for the
+  // teacher to reopen them rather than unlock screens that need an event result.
+  if (['eventRoll','eventCard','eventResolve','eventResult'].includes(id) && !state.event) return false;
+  // Submission finishes shared work. Reading screens still belong to this device,
+  // including the welcome screens for a student who joins a submitted team late.
+  if (team.submittedAt && index >= 0 && index <= talkIndex && stepById[id].kind === 'team') return true;
+  switch (id) {
+    case 'choosePlace': return !!state.mapPoint;
+    case 'techTree': case 'civicTree': {
+      const tree = id === 'techTree' ? 'tech' : 'civic';
+      return !!state.event || (state[tree].length > 0 && !treeIssues(state).some(issue => issue.tree === tree));
+    }
+    case 'techReview': case 'civicReview': return !!state.event || seen.has(id);
+    case 'eventRoll': return !!state.event;
+    case 'eventResolve': return !!state.event && eventPlan(state).resolved;
+    case 'eventResult': return seen.has(id) || filled(state, 'eventAnswer');
+    case 'civName': return seen.has(id) || filled(state, 'civName');
+    case 'government': return choicesValid(state,'government') && filled(state, 'governmentAnswer');
+    case 'economy': return choicesValid(state,'economy') && filled(state, 'economyAnswer');
+    case 'beliefs': return choicesValid(state,'beliefs') && filled(state, 'beliefAnswer');
+    case 'submit': return !!team.submittedAt;
+    case 'wait': return !!reveal;
+  }
+  if (textFields.includes(id)) return filled(state, id);
+  return seen.has(id);
+}
+const applicable = team => steps.filter(step => stepApplies(step.id, team));
+// The first step on this device that is not finished yet.
+export function nextStep(team, seen, reveal) {
+  return applicable(team).find(step => !stepDone(step.id, team, seen, reveal)) ?? applicable(team).at(-1);
+}
+// A step can be opened when every applicable step before it is finished.
+export function stepAvailable(id, team, seen, reveal) {
+  const list = applicable(team), index = list.findIndex(step => step.id === id);
+  return index >= 0 && list.slice(0, index).every(step => stepDone(step.id, team, seen, reveal));
+}
+export const neighbourStep = (id, team, offset) => {
+  const list = applicable(team), index = list.findIndex(step => step.id === id);
+  return list[index + offset]?.id ?? null;
+};
+// The furthest step the TEAM has reached (ignores this device's reading screens).
+// Used to offer "jump to your team" and by the teacher dashboard.
+export function teamStep(team, reveal) {
+  const everything = new Set(steps.filter(step => step.kind === 'seen').map(step => step.id));
+  return nextStep(team, everything, reveal);
+}
+// True once the team has done something real: a card, the event or an answer.
+export const teamStarted = team => { const state = team.state; return !!(state.tech.length || state.civic.length || state.event || writableFields.some(key => state[key].trim())); };
+export function chapterOf(id) { return stepById[id]?.chapter ?? 'start'; }

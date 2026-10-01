@@ -2,28 +2,28 @@
 // its database at module load. These tests run under --test-isolation=none, so every test
 // file shares one process: any file that imports the store earlier would write to the real
 // data/ directory. Keep the dynamic imports below.
-import { after, test } from 'node:test';
+import { after, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { cooperativeDemoPlan } from '../scripts/cooperative-demo.js';
-import { findRoute } from '../shared/strategy/logistics.js';
-import { resources, resourceTotal } from '../shared/strategy/resources.js';
-import { fitTiles, hexes } from '../shared/land.js';
-import { suggestTrail } from '../shared/layout.js';
+import { DatabaseSync } from 'node:sqlite';
 
 const dataDir=mkdtempSync(join(tmpdir(),'civ-test-'));
 process.env.DATA_DIR=dataDir;
 const {createAppServer,closeStreams}=await import('../server/http.js');
 const {closeStore}=await import('../server/store.js');
 
+// Every die in these tests is scripted. A test that needs a die it did not queue fails.
+const dice=[];
+let diceUsed=0;
+const rollDie=()=>{diceUsed++;if(!dice.length)throw new Error('unexpected die roll');return dice.shift()};
 const teacherPassword='test-teacher-password';
-const server=createAppServer({teacherPassword});
+const server=createAppServer({teacherPassword,rollDie});
 await new Promise(ready=>server.listen(0,'127.0.0.1',ready));
 const base=`http://127.0.0.1:${server.address().port}`;
 // A second server on the shared store, standing in for the hosted setup behind a proxy.
-const proxied=createAppServer({teacherPassword,trustProxy:true});
+const proxied=createAppServer({teacherPassword,trustProxy:true,rollDie});
 await new Promise(ready=>proxied.listen(0,'127.0.0.1',ready));
 const proxiedBase=`http://127.0.0.1:${proxied.address().port}`;
 const limit={timeout:25_000};
@@ -37,9 +37,16 @@ const request=async(path,body,cookie,options={})=>{
   const data=res.headers.get('content-type')?.includes('json')?await res.json():await res.text();
   return {status:res.status,data,cookie:res.headers.get('set-cookie')?.split(';')[0],headers:res.headers};
 };
-const signInTeacher=async()=>(await request('/api/auth/teacher',{password:teacherPassword})).cookie;
+let teacherCookie;
+const signInTeacher=async()=>{
+  if (teacherCookie) return teacherCookie;
+  const response=await request('/api/auth/teacher',{password:teacherPassword});
+  assert.equal(response.status,200);
+  return teacherCookie=response.cookie;
+};
 const makeTeam=async(teacher,name)=>(await request('/api/teacher/teams',{name},teacher)).data.team;
 const joinTeam=async(code,name)=>await request('/api/auth/team',{name,code});
+const answers=['eventAnswer','geographyAnswer','governmentAnswer','economyAnswer','beliefAnswer','shapeAnswer','notChosenAnswer'];
 
 // Event-stream reader. Frames arrive coalesced or split depending on timing, so they are
 // parsed into a queue and matched by predicate rather than by position.
@@ -73,35 +80,16 @@ async function openStream(cookie) {
         await new Promise(done=>setTimeout(done,25));
       }
       throw new Error(`timed out waiting for ${label}; saw ${frames.length?frames.join(' || '):'nothing'}`);
-    },
-    async quiet(ms=250){ await new Promise(done=>setTimeout(done,ms)); }
+    }
   };
   streams.push(stream);
   return stream;
 }
 const dataOf=frame=>JSON.parse(frame.slice(frame.indexOf('data: ')+6));
 
-test('classroom plans and atomic trails persist across devices, reject stale previews and lock on submission',limit,async()=>{
- const teacher=(await request('/api/auth/teacher',{password:teacherPassword},undefined,{base:proxiedBase,headers:{'X-Forwarded-For':'192.0.2.240'}})).cookie,made=await makeTeam(teacher,'Layout test');
- const a=(await joinTeam(made.code,'Layout A')).cookie,b=(await joinTeam(made.code,'Layout B')).cookie;
- const act=async action=>{const response=await request('/api/team/action',action,a);assert.equal(response.status,200,JSON.stringify(response.data));return response.data.team;};
- await act({type:'map',point:'E'});await act({type:'field',key:'placeAnswer',value:'A river plain.'});await act({type:'event',id:'origin',choice:'steward'});
- let team=await act({type:'pick',tree:'tech',id:'pottery',tile:null});assert.equal(team.state.tiles.pottery,undefined);
- team=await act({type:'pick',tree:'tech',id:'husbandry',tile:null});
- const tile=fitTiles(team.state,'husbandry').find(i=>hexes[i].dist===2);
- team=await act({type:'place',id:'husbandry',tile});const path=suggestTrail(team.state,tile),version=team.version;
- const invalid=await request('/api/team/action',{type:'trail',mode:'add',path:[path[0],tile]},a);assert.equal(invalid.status,400);
- assert.equal((await request('/api/me',undefined,b)).data.team.version,version,'invalid trail commits nothing');
- team=await act({type:'trail',mode:'add',path,expectedVersion:version});
- const stale=await request('/api/team/action',{type:'trail',mode:'remove',path,expectedVersion:version},b);assert.equal(stale.status,409);assert.deepEqual(stale.data.team.state.trails,team.state.trails);
- const read=(await request('/api/me',undefined,b)).data.team;assert.deepEqual(read.state.trails,team.state.trails);assert.equal(read.state.tiles.pottery,undefined);
- await act({type:'pick',tree:'civic',id:'laws',tile:null});await act({type:'event',id:'encounter',choice:'share'});
- for(const key of ['techAnswer','societyAnswer','beliefAnswer','contactAnswer'])await act({type:'field',key,value:'We accept the map tradeoffs.'});
- assert.equal((await request('/api/team/submit',{},a)).status,200);
- assert.equal((await request('/api/team/action',{type:'trail',mode:'remove',path},b)).status,400);
- const reviewed=(await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team;
- assert.deepEqual(reviewed.state.trails,team.state.trails);assert(reviewed.state.plannedBuildings.includes('pottery'));assert(reviewed.submittedAt);
- for(const route of ['/guided-view.js','/shared/layout.js','/shared/layout-report.js','/shared/flow.js','/shared/flow-copy.js'])assert.equal((await request(route)).status,200,route);
+afterEach(()=>{
+  try {assert.equal(dice.length,0,'every scripted die must be consumed by its test');}
+  finally {dice.length=0;}
 });
 
 after(async()=>{
@@ -116,7 +104,7 @@ after(async()=>{
   if(abs.startsWith(safe)) rmSync(abs,{recursive:true,force:true});
 });
 
-test('30 students can join, share stages and answers, then submit once',limit,async()=>{
+test('30 students can join, share choices and answers, roll the event and submit once',limit,async()=>{
   const teacher=await signInTeacher();
   const made=await makeTeam(teacher,'River Makers');
   const second=await makeTeam(teacher,'Mountain Group');
@@ -129,44 +117,319 @@ test('30 students can join, share stages and answers, then submit once',limit,as
   assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,outsider.cookie)).status,401);
 
   const live=await Promise.all(students.map(student=>openStream(student.cookie)));
-  assert.equal((await request('/api/team/action',{type:'map',point:'A'},a)).status,200);
-  const frames=await Promise.all(live.map(stream=>stream.waitFor(frame=>frame.includes('"mapPoint":"A"'),'the shared map choice')));
-  assert(frames.every(frame=>frame.startsWith('event: team')));
+  assert.equal((await request('/api/team/action',{type:'map',point:'G'},a)).status,200);
+  const frames=await Promise.all(live.map(stream=>stream.waitFor(frame=>frame.startsWith('event: team')&&frame.includes('"mapPoint":"G"'),'the shared place')));
   assert(frames.every(frame=>dataOf(frame).by==='Student 1'),'the payload names who changed it');
-  // The live roster counts open streams, so it is complete while all 30 are connected.
   assert.equal((await request('/api/me',undefined,b)).data.roster.length,30);
-
   for(const stream of live) stream.controller.abort();
   await new Promise(done=>setTimeout(done,250));
-  // Once they disconnect the live roster empties, but attendance still shows all 30.
   assert.equal((await request('/api/me',undefined,b)).data.roster.length,1,'only the caller remains');
   assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.joined.length,30,'attendance keeps everyone');
 
-  await request('/api/team/action',{type:'field',key:'placeAnswer',value:'The river helps travel but flooding is difficult.'},b);
-  await request('/api/team/action',{type:'stage',stage:2},a);
-  const seen=await request('/api/me',undefined,b);
-  assert.equal(seen.data.team.state.mapPoint,'A');
-  assert.equal(seen.data.team.state.placeAnswer,'The river helps travel but flooding is difficult.');
-  assert.equal(seen.data.team.state.avatar,'A');
-  assert.equal(seen.data.team.state.stage,2);
+  const act=async(action,cookie=a)=>{const response=await request('/api/team/action',action,cookie);assert.equal(response.status,200,JSON.stringify(response.data));return response.data.team;};
+  await act({type:'field',key:'geographyAnswer',value:'The Nile floods on time.'},b);
+  for(const id of ['pottery','irrigation','sailing','writing'])await act({type:'pick',tree:'tech',id});
+  for(const id of ['laws','craft'])await act({type:'pick',tree:'civic',id},b);
+  const seen=(await request('/api/me',undefined,b)).data.team;
+  assert.deepEqual(seen.state.tech,['pottery','irrigation','sailing','writing']);
+  assert.equal(seen.state.geographyAnswer,'The Nile floods on time.');
   assert.equal((await request('/api/me',undefined,outsider.cookie)).data.team.state.mapPoint,'','the other team is untouched');
 
   const early=await request('/api/team/submit',{},b);
   assert.equal(early.status,400);
-  assert(early.data.gaps.includes('tech'));
-  for(const [key,value] of Object.entries({techAnswer:'Pottery stores water',societyAnswer:'Council shares food',beliefAnswer:'Shared rituals',contactAnswer:'Exchange pottery, but some people may lose access'})) {
-    assert.equal((await request('/api/team/action',{type:'field',key,value},a)).status,200);
-  }
-  assert.equal((await request('/api/team/action',{type:'event',id:'origin',choice:'explore'},a)).status,200);
-  for(const [tree,id] of [['tech','pottery'],['civic','laws']]) assert.equal((await request('/api/team/action',{type:'pick',tree,id},a)).status,200);
-  assert.equal((await request('/api/team/action',{type:'event',id:'encounter',choice:'exchange'},a)).status,200);
+  assert(early.data.gaps.includes('event')&&early.data.gaps.includes('shapeAnswer'));
+  dice.push(6);
+  let team=await act({type:'eventRoll',confirm:{tech:seen.state.tech,civic:seen.state.civic}});
+  assert.equal(team.state.event.roll,6);
+  team=await act({type:'eventGain',tree:'tech',id:'currency',index:0},b);
+  assert(team.state.tech.includes('currency'));
+  for(const key of answers)await act({type:'field',key,value:'Our team explanation'});
+  await act({type:'chip',key:'government',value:'council'});
+  await act({type:'chip',key:'economy',value:'farming',on:true});
+  await act({type:'chip',key:'beliefs',value:'nature'});
   const submitted=await request('/api/team/submit',{},b);
   assert.equal(submitted.status,200);
   assert(submitted.data.team.submittedAt);
-  assert.equal((await request('/api/team/action',{type:'field',key:'contactAnswer',value:'Changed'},a)).status,400);
-  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.contactAnswer,'Exchange pottery, but some people may lose access');
+  const locked=await request('/api/team/action',{type:'field',key:'shapeAnswer',value:'Changed'},a);
+  assert.equal(locked.status,400);
+  assert.equal(locked.data.code,'submitted');
+  assert.equal((await request('/api/team/submit',{},a)).data.code,'submitted');
+  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.shapeAnswer,'Our team explanation');
   assert.equal((await request(`/api/teacher/teams/${made.id}/reopen`,{},teacher)).status,200);
-  assert.equal((await request('/api/team/action',{type:'field',key:'contactAnswer',value:'Changed'},a)).status,200);
+  assert.equal((await request('/api/team/action',{type:'field',key:'shapeAnswer',value:'Changed'},a)).status,200);
+});
+
+test('every die is rolled on the server, once, and a roll from the browser is ignored',limit,async()=>{
+  const teacher=await signInTeacher();
+  const made=await makeTeam(teacher,'Dice Team');
+  const a=(await joinTeam(made.code,'Rin')).cookie,b=(await joinTeam(made.code,'Kai')).cookie;
+  const act=(action,cookie=a)=>request('/api/team/action',action,cookie);
+  await act({type:'map',point:'G'});
+  for(const id of ['husbandry','archery'])assert.equal((await act({type:'pick',tree:'tech',id})).status,200);
+  dice.push(2);
+  const horse=await act({type:'pick',tree:'tech',id:'horseback',roll:6});
+  assert.equal(horse.status,200);
+  assert.equal(horse.data.team.state.rolls.horseback,2,'the scripted server die decides, not the request');
+  assert.equal((await act({type:'unpick',tree:'tech',id:'horseback',cascade:[]})).status,200);
+  const used=diceUsed;
+  assert.equal((await act({type:'pick',tree:'tech',id:'horseback'})).data.team.state.rolls.horseback,2);
+  assert.equal(diceUsed,used,'adding the card again does not roll again');
+  assert.equal((await act({type:'pick',tree:'tech',id:'horseback'})).status,409,'a card already chosen');
+  assert.equal((await act({type:'unpick',tree:'tech',id:'archery',cascade:[]})).status,409,'the removal must name Horseback too');
+  assert.equal((await act({type:'pick',tree:'civic',id:'laws'})).status,200);
+  // Two students press "Roll" at the same moment: one roll wins, the other sees it.
+  const state=(await request('/api/me',undefined,a)).data.team.state;
+  dice.push(2);
+  const confirm={tech:state.tech,civic:state.civic};
+  const [first,second]=await Promise.all([act({type:'eventRoll',confirm},a),act({type:'eventRoll',confirm},b)]);
+  assert.deepEqual([first.status,second.status].sort(),[200,409]);
+  const loser=first.status===409?first:second;
+  assert.equal(loser.data.code,'alreadyRolled');
+  assert.equal(loser.data.team.state.event.roll,2,'the refusal carries the roll that happened');
+  assert.equal(dice.length,0,'exactly one die was used');
+  assert.equal((await act({type:'eventLose',tree:'tech',id:'horseback',index:1})).status,409,'a stale index');
+  assert.equal((await act({type:'eventLose',tree:'tech',id:'husbandry',index:0})).status,400,'not at the end of a branch');
+  assert.equal((await act({type:'eventLose',tree:'tech',id:'horseback',index:0})).status,200);
+  assert.equal((await act({type:'pick',tree:'tech',id:'pottery'})).status,409,'the trees are locked after the event');
+});
+
+test('invalid server dice roll back the complete action and its activity entry',limit,async()=>{
+  const teacher=await signInTeacher();
+  const made=await makeTeam(teacher,'Rollback Dice');
+  const student=await joinTeam(made.code,'Akira');
+  const act=action=>request('/api/team/action',action,student.cookie);
+  await act({type:'map',point:'G'});
+  await act({type:'pick',tree:'tech',id:'husbandry'});
+  await act({type:'pick',tree:'tech',id:'archery'});
+  const before=(await request('/api/me',undefined,student.cookie)).data.team;
+  const logBefore=(await request(`/api/teacher/teams/${made.id}/activity`,undefined,teacher)).data;
+  for(const invalid of [0,7,2.5]) {
+    dice.push(invalid);
+    const response=await act({type:'pick',tree:'tech',id:'horseback'});
+    assert.equal(response.status,500);
+    assert.equal(response.data.error,'Server error');
+    const current=(await request('/api/me',undefined,student.cookie)).data.team;
+    assert.equal(current.version,before.version);
+    assert.deepEqual(current.state,before.state);
+    assert.deepEqual((await request(`/api/teacher/teams/${made.id}/activity`,undefined,teacher)).data,logBefore);
+  }
+  dice.push(4);
+  assert.equal((await act({type:'pick',tree:'tech',id:'horseback'})).data.team.state.rolls.horseback,4,'a valid retry succeeds after rollback');
+});
+
+test('HTTP picks and free event gains cannot bypass a missing Philosophy branch',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Required Branches');
+  const student=await joinTeam(made.code,'Akio');
+  const act=action=>request('/api/team/action',action,student.cookie);
+  assert.equal((await act({type:'map',point:'G'})).status,200);
+  assert.equal((await act({type:'pick',tree:'tech',id:'pottery'})).status,200);
+  for(const id of ['laws','craft','workforce','trade'])assert.equal((await act({type:'pick',tree:'civic',id})).status,200);
+  const before=(await request('/api/me',undefined,student.cookie)).data.team;
+  const bypass=await act({type:'pick',tree:'civic',id:'philosophy'});
+  assert.equal(bypass.status,400);assert.equal(bypass.data.code,'needsParent');
+  assert.equal((await request('/api/me',undefined,student.cookie)).data.team.version,before.version,'a refusal writes nothing');
+  dice.push(6);
+  assert.equal((await act({type:'eventRoll',confirm:{tech:before.state.tech,civic:before.state.civic}})).status,200);
+  const gain=await act({type:'eventGain',tree:'civic',id:'philosophy',index:0});
+  assert.equal(gain.status,400);assert.equal(gain.data.code,'cannotGain');
+  assert.equal((await act({type:'eventGain',tree:'civic',id:'empire',index:0})).status,200);
+  assert.equal((await act({type:'chip',key:'government',value:'ruler'})).status,200,'working Empire and Workforce now support centralized governance');
+  assert.equal((await act({type:'chip',key:'government',value:'assembly'})).data.code,'needsCapabilities','an Empire gain does not also grant Philosophy');
+});
+
+test('HTTP institution choices require their working developments',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Institution Builders');
+  const student=await joinTeam(made.code,'Maki');
+  const act=action=>request('/api/team/action',action,student.cookie);
+  await act({type:'map',point:'G'});
+  for(const id of ['laws','trade','empire','poetry'])assert.equal((await act({type:'pick',tree:'civic',id})).status,200);
+  for(const [key,value]of [['government','priests'],['beliefs','mystics'],['beliefs','organized']]) {
+    const refused=await act({type:'chip',key,value});
+    assert.equal(refused.status,400);assert.equal(refused.data.code,'needsCapabilities');
+  }
+  assert.equal((await act({type:'chip',key:'beliefs',value:'ancestors'})).status,200,'ordinary spirituality is not gated behind institutions');
+  assert.equal((await act({type:'pick',tree:'civic',id:'mysticism'})).status,200);
+  assert.equal((await act({type:'chip',key:'government',value:'priests'})).status,200);
+  assert.equal((await act({type:'chip',key:'beliefs',value:'mystics'})).status,200);
+  assert.equal((await act({type:'chip',key:'beliefs',value:'organized'})).data.code,'needsCapabilities');
+  assert.equal((await act({type:'pick',tree:'civic',id:'theology'})).status,200);
+  assert.equal((await act({type:'chip',key:'beliefs',value:'organized'})).status,200);
+});
+
+test('ordinary leadership, subsistence and belief can complete a team after Society is lost',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Life After Loss');
+  const student=await joinTeam(made.code,'Emi');
+  const act=action=>request('/api/team/action',action,student.cookie);
+  await act({type:'map',point:'G'});
+  await act({type:'pick',tree:'tech',id:'pottery'});
+  await act({type:'pick',tree:'civic',id:'laws'});
+  dice.push(4);
+  assert.equal((await act({type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']}})).status,200);
+  const empty=await act({type:'eventLose',id:'laws',index:0});
+  assert.equal(empty.status,200);assert.deepEqual(empty.data.team.state.civic,[]);
+  assert.equal((await act({type:'chip',key:'government',value:'priests'})).data.code,'needsCapabilities');
+  assert.equal((await act({type:'chip',key:'government',value:'council'})).status,200);
+  for(const value of ['farming','fishing','hunting'])assert.equal((await act({type:'chip',key:'economy',value,on:true})).status,200);
+  assert.equal((await act({type:'chip',key:'beliefs',value:'one'})).status,200);
+  for(const key of answers)assert.equal((await act({type:'field',key,value:'Our revised explanation.'})).status,200);
+  assert.equal((await request('/api/team/submit',{},student.cookie)).status,200,'an emptied Society tree does not force impossible institutions');
+});
+
+test('the teacher opens the reveal for everyone, and a new stream learns it at once',limit,async()=>{
+  const teacher=await signInTeacher();
+  const made=await makeTeam(teacher,'Reveal Team');
+  const student=await joinTeam(made.code,'Mio');
+  assert.equal(student.data.reveal,false);
+  const live=await openStream(student.cookie);
+  assert.equal(dataOf(await live.waitFor(frame=>frame.startsWith('event: reveal'),'the first reveal frame')).reveal,false);
+  assert.equal((await request('/api/teacher/reveal',{reveal:true},student.cookie)).status,401,'students cannot open it');
+  assert.equal((await request('/api/teacher/reveal',{reveal:'yes'},teacher)).status,400);
+  const opened=await request('/api/teacher/reveal',{reveal:true},teacher);
+  assert.equal(opened.data.reveal,true);
+  assert.equal(dataOf(await live.waitFor(frame=>frame.startsWith('event: reveal')&&frame.includes('true'),'the reveal opening')).reveal,true);
+  assert.equal((await request('/api/me',undefined,student.cookie)).data.reveal,true);
+  assert.equal((await request('/api/me',undefined,teacher)).data.reveal,true);
+  const late=await openStream(student.cookie);
+  assert.equal(dataOf(await late.waitFor(frame=>frame.startsWith('event: reveal'),'the state on connect')).reveal,true);
+  assert.equal((await request('/api/teacher/reveal',{reveal:false},teacher)).data.reveal,false);
+  live.controller.abort();late.controller.abort();
+});
+
+test('a teacher can assign a custom team a fixed region, and a reconnect receives current state',limit,async()=>{
+  const teacher=await signInTeacher();
+  const created=await request('/api/teacher/teams',{name:'Fixed Nile',point:'G'},teacher);
+  assert.equal(created.status,201);
+  assert.equal(created.data.team.state.fixedPoint,'G');
+  assert.equal(created.data.team.state.mapPoint,'G');
+  for(const point of ['Z',false,0,null]) assert.equal((await request('/api/teacher/teams',{name:'Invalid region',point},teacher)).status,400);
+  const student=await joinTeam(created.data.team.code,'Nori');
+  const first=await openStream(student.cookie);
+  assert.equal(dataOf(await first.waitFor(frame=>frame.startsWith('event: team'))).team.state.mapPoint,'G');
+  first.controller.abort();
+  assert.equal((await request('/api/team/action',{type:'field',key:'geographyAnswer',value:'Saved while disconnected'},student.cookie)).status,200);
+  const reconnected=await openStream(student.cookie);
+  const current=dataOf(await reconnected.waitFor(frame=>frame.startsWith('event: team')));
+  assert.equal(current.team.state.geographyAnswer,'Saved while disconnected');
+  assert(current.roster.includes('Nori'));
+  const teachers=await openStream(teacher);
+  assert(dataOf(await teachers.waitFor(frame=>frame.startsWith('event: teams'))).teams.some(team=>team.id===created.data.team.id));
+  reconnected.controller.abort();teachers.controller.abort();
+});
+
+test('logout revokes the session and its existing stream',limit,async()=>{
+  const teacher=await signInTeacher();
+  const made=await makeTeam(teacher,'Sign Out');
+  const student=await joinTeam(made.code,'Sora');
+  const live=await openStream(student.cookie);
+  await live.waitFor(frame=>frame.startsWith('event: team'));
+  assert.equal((await request('/api/logout',{},student.cookie)).status,200);
+  assert.equal(dataOf(await live.waitFor(frame=>frame.startsWith('event: revoked'))).reason,'logout');
+  assert.equal((await request('/api/me',undefined,student.cookie)).data.authenticated,false);
+  assert.equal((await request('/api/team/action',{type:'field',key:'civName',value:'Cannot save'},student.cookie)).status,401);
+});
+
+test('writes require same-origin JSON objects and bounded request bodies',limit,async()=>{
+  const teacher=await signInTeacher();
+  for(const body of [null,[],false,'name']) assert.equal((await request('/api/teacher/teams',body,teacher)).status,400);
+  for(const origin of ['https://elsewhere.example','null','file://'+new URL(base).host]) {
+    assert.equal((await request('/api/teacher/teams',{name:'No access'},teacher,{headers:{Origin:origin}})).status,403);
+  }
+  assert.equal((await request('/api/teacher/teams',{name:'Wrong content type'},teacher,{headers:{'Content-Type':'text/plain'}})).status,415);
+  assert.equal((await request('/api/teacher/teams',{name:'あ'.repeat(5000)},teacher)).status,413,'the body limit counts UTF-8 bytes');
+});
+
+test('a team saved by the old hex-map version opens in the new shape',limit,async()=>{
+  const teacher=await signInTeacher();
+  const made=await makeTeam(teacher,'Old Save');
+  const old={stage:3,mapPoint:'H',avatar:'H',route:'water',placeAnswer:'Rivers help',beliefAnswer:'The land is alive',tech:['pottery','husbandry','archery'],civic:['laws','mutual_aid'],events:{origin:'steward',encounter:'share'},tiles:{pottery:4},trails:[[1,2]],plannedBuildings:[]};
+  const db=new DatabaseSync(join(dataDir,'classroom.sqlite'));
+  db.prepare('UPDATE teams SET state_json=? WHERE id=?').run(JSON.stringify(old),made.id);
+  db.close();
+  const student=await joinTeam(made.code,'Ryo');
+  const state=student.data.team.state;
+  assert.equal(state.v,2);
+  assert.deepEqual(state.tech,['pottery'],'Animal Husbandry is impossible in H');
+  assert.deepEqual(state.civic,['laws']);
+  assert.equal(state.beliefAnswer,'The land is alive');
+  assert.equal(state.legacy.placeAnswer,'Rivers help');
+  assert(!('tiles' in state)&&!('route' in state));
+  const saved=await request('/api/team/action',{type:'field',key:'civName',value:'Eel Keepers'},student.cookie);
+  assert.equal(saved.status,200);
+  const check=new DatabaseSync(join(dataDir,'classroom.sqlite'));
+  const row=JSON.parse(check.prepare('SELECT state_json FROM teams WHERE id=?').get(made.id).state_json);
+  check.close();
+  assert.equal(row.v,2,'the next save stores the new shape');
+  assert(!('tiles' in row));
+  const gaps=(await request('/api/team/submit',{},student.cookie)).data.gaps;
+  assert(gaps.includes('event'));
+  const backups=readdirSync(join(dataDir,'backups'));
+  assert.equal(backups.length,1,'the first migrated write preserves the old database');
+  const backup=new DatabaseSync(join(dataDir,'backups',backups[0],'classroom.sqlite'),{readOnly:true});
+  assert.deepEqual(JSON.parse(backup.prepare('SELECT state_json FROM teams WHERE id=?').get(made.id).state_json),old);
+  backup.close();
+});
+
+test('a strict dependency upgrade preserves raw v2 cards and answers before saving a pruned tree',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'OR Rules Save');
+  const original={v:2,mapPoint:'G',tech:['pottery'],civic:['laws','craft','workforce','philosophy'],rolls:{},event:null,government:'assembly',governmentAnswer:'Keep our earlier explanation of decision-making.'};
+  const db=new DatabaseSync(join(dataDir,'classroom.sqlite'));
+  try {db.prepare('UPDATE teams SET state_json=? WHERE id=?').run(JSON.stringify(original),made.id);}
+  finally {db.close();}
+  const student=await joinTeam(made.code,'Kei');
+  assert.deepEqual(student.data.team.state.civic,['laws','craft','workforce'],'the missing Empire branch is not silently treated as optional');
+  const saved=await request('/api/team/action',{type:'field',key:'civName',value:'Revised Institutions'},student.cookie);
+  assert.equal(saved.status,200);
+  assert.equal(saved.data.team.state.governmentAnswer,original.governmentAnswer);
+  const backups=readdirSync(join(dataDir,'backups')).filter(name=>name.startsWith('pre-rules-'));
+  assert.equal(backups.length,1,'a rules revision gets its own backup independently of a pre-v2 migration');
+  const folder=join(dataDir,'backups',backups[0]);
+  assert.deepEqual(readFileSync(join(folder,'secret.key')),readFileSync(join(dataDir,'secret.key')));
+  const backup=new DatabaseSync(join(folder,'classroom.sqlite'),{readOnly:true});
+  try {
+    assert.deepEqual(JSON.parse(backup.prepare('SELECT state_json FROM teams WHERE id=?').get(made.id).state_json),original);
+    assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+  } finally {backup.close();}
+});
+
+test('an upgrade checkpoints and backs up existing data before v2 writes, without dropping old worlds',limit,async()=>{
+  const folder=join(dataDir,'upgrade-fixture');
+  mkdirSync(folder);
+  const secret=Buffer.alloc(32,42);
+  writeFileSync(join(folder,'secret.key'),secret);
+  const original={mapPoint:'G',tech:['pottery'],civic:['laws'],placeAnswer:'Keep this answer',events:{origin:'share'}};
+  const source=new DatabaseSync(join(folder,'classroom.sqlite'));
+  source.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE teams (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,code_hash TEXT NOT NULL UNIQUE,state_json TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 0,submitted_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE worlds (id INTEGER PRIMARY KEY, state_json TEXT);
+    CREATE TABLE world_access (world_id INTEGER, token TEXT);`);
+  source.prepare('INSERT INTO teams (name,code_hash,state_json,version) VALUES (?,?,?,?)').run('Legacy team','old-hash',JSON.stringify(original),7);
+  source.prepare('INSERT INTO worlds VALUES (?,?)').run(9,'old world still belongs to the teacher');
+  source.prepare('INSERT INTO world_access VALUES (?,?)').run(9,'saved access');
+  // Leave the source connection open: recent writes are in the WAL at process startup.
+  const moduleUrl=new URL('../server/store.js',import.meta.url).href;
+  try {
+    const previousDataDir=process.env.DATA_DIR;
+    let upgraded;
+    try {process.env.DATA_DIR=folder;upgraded=await import(moduleUrl+'?upgrade-fixture');}
+    finally {process.env.DATA_DIR=previousDataDir;}
+    try {upgraded.updateTeam(1,{type:'field',key:'civName',value:'Migrated'},'Test');}
+    finally {upgraded.closeStore();}
+    const backups=readdirSync(join(folder,'backups'));
+    assert.equal(backups.length,1);
+    const backupPath=join(folder,'backups',backups[0]);
+    assert.deepEqual(readFileSync(join(backupPath,'secret.key')),secret);
+    const backup=new DatabaseSync(join(backupPath,'classroom.sqlite'),{readOnly:true});
+    try {
+      assert.deepEqual(JSON.parse(backup.prepare('SELECT state_json FROM teams WHERE id=1').get().state_json),original);
+      assert.equal(backup.prepare('SELECT version FROM teams WHERE id=1').get().version,7);
+      assert(!backup.prepare('PRAGMA table_info(teams)').all().some(column=>column.name==='code'),'the copy precedes even schema changes');
+      assert.equal(backup.prepare('SELECT token FROM world_access WHERE world_id=9').get().token,'saved access');
+      assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+    } finally {backup.close();}
+    assert.equal(JSON.parse(source.prepare('SELECT state_json FROM teams WHERE id=1').get().state_json).v,2);
+    assert.equal(source.prepare('SELECT state_json FROM worlds WHERE id=9').get().state_json,'old world still belongs to the teacher');
+    assert.equal(source.prepare('SELECT token FROM world_access WHERE world_id=9').get().token,'saved access');
+  } finally {source.close();}
 });
 
 test('presence tells teammates which field someone is writing in',limit,async()=>{
@@ -175,75 +438,20 @@ test('presence tells teammates which field someone is writing in',limit,async()=
   const writer=await joinTeam(team.code,'Kenji');
   const watcher=await joinTeam(team.code,'Mei');
   const watching=await openStream(watcher.cookie);
+  await watching.waitFor(frame=>frame.startsWith('event: team'),'the initial team frame');
   await openStream(writer.cookie);
 
-  assert.equal((await request('/api/team/presence',{field:'placeAnswer'},writer.cookie)).status,200);
-  const frame=await watching.waitFor(f=>f.startsWith('event: presence')&&f.includes('"placeAnswer"'),'a presence event for placeAnswer');
+  assert.equal((await request('/api/team/presence',{field:'geographyAnswer'},writer.cookie)).status,200);
+  const frame=await watching.waitFor(f=>f.startsWith('event: presence')&&f.includes('"geographyAnswer"'),'a presence event');
   const payload=dataOf(frame);
-  assert.deepEqual(payload.fields.placeAnswer,['Kenji']);
+  assert.deepEqual(payload.fields.geographyAnswer,['Kenji']);
   assert(payload.roster.includes('Mei')&&payload.roster.includes('Kenji'),'and carries the live roster');
   assert(!watching.frames.some(f=>f.startsWith('event: team')),'presence never re-sends team state');
-
   await request('/api/team/presence',{field:null},writer.cookie);
   const cleared=await watching.waitFor(f=>f.includes('"fields":{}'),'presence being cleared on blur');
   assert.deepEqual(dataOf(cleared).fields,{});
-  assert.equal((await request('/api/team/presence',{field:'not-a-field'},writer.cookie)).status,400);
-  assert.equal((await request('/api/team/presence',{field:'placeAnswer'},teacher)).status,401,'teachers have no presence');
-});
-
-test('branch decisions and character choices reach teammates; resets remove gated cards',limit,async()=>{
-  const teacher=await signInTeacher();
-  const team=await makeTeam(teacher,'Branch Team');
-  const writer=await joinTeam(team.code,'Aki');
-  const watcher=await joinTeam(team.code,'Sora');
-  const stream=await openStream(watcher.cookie);
-  const act=body=>request('/api/team/action',body,writer.cookie);
-  await act({type:'map',point:'H'});
-  await act({type:'field',key:'placeAnswer',value:'Seasonal rain changes travel.'});
-  assert((await stream.waitFor(frame=>frame.includes('"avatar":"H"'))).startsWith('event: team'));
-  assert.equal((await act({type:'avatar',id:'A'})).status,400);
-  assert.equal((await act({type:'event',id:'origin',choice:'steward'})).status,200);
-  assert.equal((await act({type:'pick',tree:'tech',id:'preservation'})).status,200);
-  assert.equal((await act({type:'pick',tree:'tech',id:'pottery'})).status,200);
-  assert.equal((await act({type:'event',id:'encounter',choice:'share'})).status,200);
-  assert.equal((await act({type:'pick',tree:'civic',id:'mutual_aid'})).status,200);
-  const changed=await act({type:'event',id:'origin',choice:'explore'});
-  assert.equal(changed.status,200);
-  assert.deepEqual(changed.data.team.state.events,{origin:'explore',encounter:''});
-  assert(!changed.data.team.state.tech.includes('preservation'));
-  assert(!changed.data.team.state.civic.includes('mutual_aid'));
-  assert(changed.data.team.state.tech.includes('pottery'));
-  assert((await stream.waitFor(frame=>frame.includes('"origin":"explore"'))).startsWith('event: team'));
-});
-
-test('moving a building reaches teammates, and no team can build on another team map',limit,async()=>{
-  const teacher=await signInTeacher();
-  const home=await makeTeam(teacher,'Builders');
-  const other=await makeTeam(teacher,'Neighbours');
-  const builder=await joinTeam(home.code,'Hana');
-  const watcher=await joinTeam(home.code,'Ren');
-  const outsider=await joinTeam(other.code,'Yui');
-  const stream=await openStream(watcher.cookie);
-  const act=(body,cookie=builder.cookie)=>request('/api/team/action',body,cookie);
-  await act({type:'map',point:'E'});
-  await act({type:'field',key:'placeAnswer',value:'The river floods and feeds the fields.'});
-  const picked=await act({type:'pick',tree:'tech',id:'pottery'});
-  assert.equal(picked.status,200);
-  const from=picked.data.team.state.tiles.pottery;
-  assert(Number.isInteger(from),'the granary is placed automatically');
-  const {generateLand,hexes,fits}=await import('../shared/land.js');
-  const land=generateLand('E');
-  const to=hexes.findIndex((h,i)=>h.dist===1&&i!==from&&fits(land,'pottery',i));
-  const moved=await act({type:'place',id:'pottery',tile:to});
-  assert.equal(moved.status,200);
-  assert.equal(moved.data.team.state.tiles.pottery,to);
-  assert((await stream.waitFor(frame=>frame.includes(`"tiles":{"pottery":${to}}`))).startsWith('event: team'));
-  assert.equal((await act({type:'place',id:'pottery',tile:40})).status,400,'a tile off the map is refused');
-  // The other team has not chosen pottery and has no map point, so the same request fails
-  // there and leaves this team untouched.
-  assert.equal((await act({type:'place',id:'pottery',tile:from},outsider.cookie)).status,400);
-  const after=await request('/api/me',undefined,builder.cookie);
-  assert.equal(after.data.team.state.tiles.pottery,to);
+  assert.equal((await request('/api/team/presence',{field:'placeAnswer'},writer.cookie)).status,400,'old fields are gone');
+  assert.equal((await request('/api/team/presence',{field:'civName'},teacher)).status,401,'teachers have no presence');
 });
 
 test('a disconnected stream does not stop delivery to the rest of the team',limit,async()=>{
@@ -260,8 +468,8 @@ test('a disconnected stream does not stop delivery to the rest of the team',limi
   await new Promise(done=>setTimeout(done,200));
   await request('/api/team/action',{type:'map',point:'C'},one.cookie);
   for(const stream of [first,last]) {
-    const frame=await stream.waitFor(f=>f.includes('"mapPoint":"C"'),'delivery past the dead client');
-    assert(frame.startsWith('event: team'));
+    const frame=await stream.waitFor(f=>f.startsWith('event: team')&&f.includes('"mapPoint":"C"'),'delivery past the dead client');
+    assert(frame);
   }
 });
 
@@ -270,18 +478,15 @@ test('teacher can rename and delete a team, and students are signed out',limit,a
   const team=await makeTeam(teacher,'Typo Naem');
   const student=await joinTeam(team.code,'Aya');
   const stream=await openStream(student.cookie);
-
   const renamed=await request(`/api/teacher/teams/${team.id}`,{name:'Delta Builders'},teacher,{method:'PATCH'});
   assert.equal(renamed.status,200);
   assert.equal(renamed.data.team.name,'Delta Builders');
   assert.equal((await request(`/api/teacher/teams/${team.id}`,{name:'   '},teacher,{method:'PATCH'})).status,400,'a blank name is refused');
   assert.equal((await request(`/api/teacher/teams/${team.id}`,{name:'Nope'},student.cookie,{method:'PATCH'})).status,401,'students cannot rename');
-
   const removed=await request(`/api/teacher/teams/${team.id}`,{},teacher,{method:'DELETE'});
   assert.equal(removed.status,200);
   assert(!removed.data.teams.some(x=>x.id===team.id));
   await stream.waitFor(f=>f.startsWith('event: revoked'),'the student being told, not left erroring');
-  // The session cascaded away with the team, so the cookie no longer authenticates.
   assert.equal((await request('/api/me',undefined,student.cookie)).data.authenticated,false);
   assert.equal((await request('/api/team/action',{type:'map',point:'A'},student.cookie)).status,401);
   assert.equal((await request(`/api/teacher/teams/${team.id}`,undefined,teacher)).status,404);
@@ -293,9 +498,8 @@ test('activity log reports what each student saved',limit,async()=>{
   const team=await makeTeam(teacher,'Busy Team');
   const busy=await joinTeam(team.code,'Hana');
   const quiet=await joinTeam(team.code,'Ren');
-  for(const value of ['One','Two','Three']) await request('/api/team/action',{type:'field',key:'placeAnswer',value},busy.cookie);
-  await request('/api/team/action',{type:'field',key:'techAnswer',value:'Clay'},quiet.cookie);
-
+  for(const value of ['One','Two','Three']) await request('/api/team/action',{type:'field',key:'geographyAnswer',value},busy.cookie);
+  await request('/api/team/action',{type:'field',key:'shapeAnswer',value:'Clay'},quiet.cookie);
   const activity=await request(`/api/teacher/teams/${team.id}/activity`,undefined,teacher);
   assert.equal(activity.status,200);
   const counts=Object.fromEntries(activity.data.counts.map(row=>[row.actor,row.total]));
@@ -314,7 +518,6 @@ test('join codes survive being read aloud, and a wrong shape says so',limit,asyn
   assert.equal(joined.status,200,'spacing and punctuation are ignored');
   assert.equal(joined.data.team.id,team.id);
   assert.equal((await joinTeam(team.code.toLowerCase(),'Lower')).status,200,'case is ignored');
-
   const short=await joinTeam('ABC','Too Short');
   assert.equal(short.status,400);
   assert.match(short.data.error,/like A-427/);
@@ -335,7 +538,7 @@ test('join codes are the team name and a PIN, and the teacher can always read th
   assert.equal((await joinTeam(fresh.data.code,'Late')).status,200);
 });
 
-test('teams A to K start on their own map point and can be restored after deletion',limit,async()=>{
+test('teams A to K start at their own place and can be restored after deletion',limit,async()=>{
   const teacher=await signInTeacher();
   const added=await request('/api/teacher/letter-teams',{},teacher);
   assert.equal(added.status,200);
@@ -346,8 +549,8 @@ test('teams A to K start on their own map point and can be restored after deleti
   assert.match(teamC.code,/^C-\d{3}$/);
   assert.equal(teamC.state.mapPoint,'C');
   const student=await joinTeam(teamC.code,'Nao');
-  assert.equal(student.data.team.state.mapPoint,'C','the team arrives already at its homeland');
-  assert.equal((await request('/api/team/action',{type:'map',point:'D'},student.cookie)).status,400,'the homeland is fixed');
+  assert.equal(student.data.team.state.mapPoint,'C','the team arrives already at its place');
+  assert.equal((await request('/api/team/action',{type:'map',point:'D'},student.cookie)).status,400,'the place is fixed');
   assert.equal((await request('/api/teacher/letter-teams',{},teacher)).data.made,0,'nothing is duplicated');
   await request(`/api/teacher/teams/${teamC.id}`,{},teacher,{method:'DELETE'});
   const restored=await request('/api/teacher/letter-teams',{},teacher);
@@ -362,20 +565,17 @@ test('sign-in limits use the forwarded address only when the proxy is trusted',l
   for(let i=0;i<12;i++) assert.equal((await from('203.0.113.7')).status,401,`attempt ${i+1} is allowed`);
   assert.equal((await from('203.0.113.7')).status,429,'the per-address allowance does run out');
   assert.equal((await from('203.0.113.8')).status,401,'a different address has its own bucket');
-  // Without trustProxy the header is ignored, so a spoofed value cannot pick a new bucket
-  // and the class is counted by the socket address instead.
   assert.equal((await direct('198.51.100.1')).status,401);
 });
 
-test('static assets are cached by content and compressed',limit,async()=>{
-  for (const path of ['/bootstrap.js','/app.js','/rpg.js','/student-view.js','/hexmap.js','/prompts.js','/shared/game.js','/shared/i18n.js','/shared/world.js','/shared/land.js']) {
+test('static assets are cached by content and compressed; the old pages are gone',limit,async()=>{
+  for (const path of ['/bootstrap.js','/app.js','/screens.js','/ui.js','/tree.js','/poster.js','/prompts.js','/teacher.js',...['game','cards','regions','glossary','flow','i18n','credits'].map(id=>`/shared/${id}.js`)]) {
     const asset=await fetch(base+path);
     assert.equal(asset.status,200,`${path} loads for the browser`);
     assert.match(asset.headers.get('content-type'),/javascript/,`${path} is served as JavaScript`);
     await asset.text();
   }
   const first=await fetch(base+'/app.js');
-  assert.equal(first.status,200);
   const etag=first.headers.get('etag');
   assert(etag,'has an ETag to revalidate against');
   assert.equal(first.headers.get('content-encoding'),'gzip','text assets are compressed');
@@ -384,109 +584,16 @@ test('static assets are cached by content and compressed',limit,async()=>{
   assert.equal(second.status,304,'a reload re-sends nothing');
   await second.text();
   const map=await fetch(base+'/map-points.css');
-  assert.equal(map.status,200);
-  assert.match(await map.text(),/\.map-dot\[data-map="A"\]\{left:16\.8%;top:61\.5%\}/,'generated from shared/game.js');
-  const rpgCss=await fetch(base+'/rpg.css');
-  assert.equal(rpgCss.status,200);
-  assert.match(await rpgCss.text(),/terrain-drift 7s/);
-  const image=await fetch(base+'/assets/world-hero.webp');
+  assert.match(await map.text(),/\.map-dot\[data-map="A"\]\{left:13\.45%;top:73\.73%\}/,'pins come from latitude and longitude');
+  const image=await fetch(base+'/assets/world-map.webp');
+  assert.equal(image.status,200);
   assert.match(image.headers.get('cache-control'),/max-age=86400/);
   await image.arrayBuffer();
-  const missing=await fetch(base+'/assets/nope.webp');
-  assert.equal(missing.status,404);
-  await missing.text();
-});
-
-test('classroom is the default and the experimental cooperative entrypoint is separate',limit,async()=>{
-  for(const path of ['/','/play','/classroom','/shared/routes.js','/cooperative.js','/cooperative-view.js','/cooperative-map.js','/cooperative-copy.js','/cooperative.css',...['index','hex','turn-manager','great-work','logistics','resources'].map(id=>'/shared/strategy/'+id+'.js')]){
-    const response=await fetch(base+path);assert.equal(response.status,200,path);
-    const text=await response.text();
-    if(path==='/')assert.match(text,/app\.js/);
-    if(path==='/play')assert.match(text,/cooperative\.js/);
-    if(path==='/classroom')assert.match(text,/app\.js/);
+  for (const path of ['/play','/cooperative.js','/hexmap.js','/rpg.css','/shared/land.js','/shared/world.js','/shared/strategy/hex.js','/api/world/me','/assets/nope.webp']) {
+    const gone=await fetch(base+path);
+    assert.equal(gone.status,404,path);
+    await gone.text();
   }
-});
-
-test('a final classroom route persists, reaches teammates and appears in teacher review',limit,async()=>{
-  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Route Makers');
-  const a=(await joinTeam(made.code,'Route Alice')).cookie,b=(await joinTeam(made.code,'Route Ben')).cookie;
-  const live=await openStream(b);
-  assert.equal((await request('/api/team/action',{type:'route',id:'land'},a)).status,400);
-  const actions=[{type:'map',point:'A'},...['placeAnswer','techAnswer','societyAnswer','beliefAnswer','contactAnswer'].map(key=>({type:'field',key,value:'Our team explanation'})),
-    {type:'event',id:'origin',choice:'explore'},...['mining','wheel'].map(id=>({type:'pick',tree:'tech',id})),
-    {type:'event',id:'encounter',choice:'exchange'},...['laws','trade'].map(id=>({type:'pick',tree:'civic',id})),{type:'stage',stage:4}];
-  for(const action of actions)assert.equal((await request('/api/team/action',action,a)).status,200);
-  assert.equal((await request('/api/team/action',{type:'route',id:'water'},a)).status,400);
-  assert.equal((await request('/api/team/action',{type:'route',id:'land'},a)).status,200);
-  const frame=await live.waitFor(frame=>frame.includes('"route":"land"'),'final route');
-  assert.equal(dataOf(frame).team.state.route,'land');
-  assert.equal((await request('/api/me',undefined,b)).data.team.state.route,'land');
-  assert.equal((await request('/api/team/submit',{},a)).status,200);
-  assert.equal((await request(`/api/teacher/teams/${made.id}`,undefined,teacher)).data.team.state.route,'land');
-  assert.equal((await request('/api/team/action',{type:'route',id:'local'},b)).status,400);
-  live.controller.abort();
-});
-
-test('world membership scopes actions and fog; stale actions return a fresh view',limit,async()=>{
-  const created=await request('/api/world/create',{}),host=created.cookie;
-  assert.equal(created.status,201);assert.equal(created.data.role,'host');
-  assert.equal(created.data.state.board['-1,-2'].fogged,true);
-  assert.equal((await request('/api/world/me')).status,401);
-  const joined=await request('/api/world/join',{code:created.data.code,playerId:'river'});
-  assert.equal(joined.status,200);assert.equal(joined.data.playerId,'river');
-  const foreignRead=await request('/api/world/me?player=highland',undefined,joined.cookie);
-  assert.equal(foreignRead.data.playerId,'river');
-  const forbidden=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},joined.cookie);
-  assert.equal(forbidden.status,403);
-  const acted=await request('/api/world/action',{playerId:'river',action:{actorId:'highland',type:'ready',expectedRevision:0}},joined.cookie);
-  assert.equal(acted.status,200);assert.equal(acted.data.state.players.river.ready,true);assert.equal(acted.data.state.players.highland.ready,false);
-  const stale=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},host);
-  assert.equal(stale.status,409);assert.equal(stale.data.state.revision,1);
-  assert.equal(stale.data.state.players.highland.ready,false);
-  const committed=await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:1}},host);
-  assert.equal(committed.status,200);assert.equal(committed.data.state.clock.round,2);
-  const reloaded=await request('/api/world/me',undefined,host);
-  assert.equal(reloaded.data.code,created.data.code);assert.equal(reloaded.data.state.clock.round,2);
-  assert.equal(reloaded.data.state.players.highland.stock.food,7);
-});
-
-test('live world streams deliver only the joined civilization view',limit,async()=>{
-  const created=await request('/api/world/create',{}),joined=await request('/api/world/join',{code:created.data.code,playerId:'river'});
-  const controller=new AbortController(),decoder=new TextDecoder();
-  try{
-    const response=await fetch(base+'/api/world/events?player=highland',{headers:{Cookie:joined.cookie},signal:controller.signal});
-    assert.equal(response.status,200);const reader=response.body.getReader();
-    let initial='';while(!initial.includes('\n\n',initial.indexOf('event: world')))initial+=decoder.decode((await reader.read()).value,{stream:true});
-    assert.match(initial,/"playerId":"river"/);assert.match(initial,/"fogged":true/);
-    assert(!initial.includes('natural-wonder'));
-    await request('/api/world/action',{playerId:'highland',action:{type:'ready',expectedRevision:0}},created.cookie);
-    let update='';while(!update.includes('"revision":1'))update+=decoder.decode((await reader.read()).value,{stream:true});
-    assert.match(update,/"ready":true/);assert.match(update,/"playerId":"river"/);
-  }finally{controller.abort();}
-});
-
-test('a complete twelve-turn cooperative game wins through the persisted HTTP API',limit,async()=>{
-  const created=await request('/api/world/create',{}),cookie=created.cookie;
-  let data=created.data;
-  async function action(playerId,payload){
-    data=(await request('/api/world/me?player='+playerId,undefined,cookie)).data;
-    if(['ship','contribute'].includes(payload.type)){
-      const target=payload.type==='ship'?data.state.players[payload.toPlayerId].settlement:data.state.work.site;
-      const path=findRoute(data.state.board,data.state.players[playerId].settlement,target,playerId,data.state.clock.round,data.state.logistics.edgeUsage,resourceTotal(resources(payload.cargo)));
-      payload={...payload,path};
-    }
-    const result=await request('/api/world/action',{playerId,action:{...payload,expectedRevision:data.state.revision}},cookie);
-    assert.equal(result.status,200,`turn ${data.state.clock.round} ${playerId} ${payload.type}: ${result.data.error??''}`);
-    data=result.data;
-  }
-  for(let round=1;round<=12;round++){
-    assert.equal(data.state.clock.round,round);
-    for(const [playerId,payload] of cooperativeDemoPlan[round]??[])await action(playerId,payload);
-    for(const playerId of ['highland','river'])await action(playerId,{type:'ready'});
-    if(data.state.phase==='assembly')for(const playerId of ['highland','river'])await action(playerId,{type:'vote',policy:'conserve'});
-  }
-  assert.equal(data.state.outcome.status,'won');assert.equal(data.state.ecosystem,96);
-  assert(Object.values(data.state.players).every(player=>player.health===3));
-  const resumed=await request('/api/world/me',undefined,cookie);
-  assert.equal(resumed.data.state.outcome.status,'won');
+  const home=await fetch(base+'/');
+  assert.match(await home.text(),/app\.js/);
 });

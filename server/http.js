@@ -1,56 +1,46 @@
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash, randomInt } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { mapPoints, normalizeCode, isCodeShape, textFields } from '../shared/game.js';
-import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, sameHash, submitTeam, teamActivity, updateTeam, createWorld, joinWorld, getWorldAccess, worldPayload, updateWorld } from './store.js';
+import { dirname, join, sep } from 'node:path';
+import { normalizeCode, isCodeShape, writableFields } from '../shared/game.js';
+import { regions, worldMap } from '../shared/regions.js';
+import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, revealOpen, sameHash, setReveal, submitTeam, teamActivity, updateTeam } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const js = 'text/javascript; charset=utf-8', css = 'text/css; charset=utf-8';
 const sourceFiles = {
-  '/guided-view.js':['public/guided-view.js','text/javascript; charset=utf-8'],
-
   '/':['public/index.html','text/html; charset=utf-8'],
-  '/play':['public/cooperative.html','text/html; charset=utf-8'],
   '/classroom':['public/index.html','text/html; charset=utf-8'],
-  '/cooperative.js':['public/cooperative.js','text/javascript; charset=utf-8'],
-  '/cooperative-view.js':['public/cooperative-view.js','text/javascript; charset=utf-8'],
-  '/cooperative-map.js':['public/cooperative-map.js','text/javascript; charset=utf-8'],
-  '/cooperative-copy.js':['public/cooperative-copy.js','text/javascript; charset=utf-8'],
-  '/cooperative.css':['public/cooperative.css','text/css; charset=utf-8'],
-  '/bootstrap.js':['public/bootstrap.js','text/javascript; charset=utf-8'],
-  '/app.js':['public/app.js','text/javascript; charset=utf-8'],
-  '/rpg.js':['public/rpg.js','text/javascript; charset=utf-8'],
-  '/student-view.js':['public/student-view.js','text/javascript; charset=utf-8'],
-  '/hexmap.js':['public/hexmap.js','text/javascript; charset=utf-8'],
-  '/prompts.js':['public/prompts.js','text/javascript; charset=utf-8'],
-  '/app.css':['public/app.css','text/css; charset=utf-8'],
-  '/rpg.css':['public/rpg.css','text/css; charset=utf-8'],
-  '/shared/game.js':['shared/game.js','text/javascript; charset=utf-8'],
-  '/shared/routes.js':['shared/routes.js','text/javascript; charset=utf-8'],
-  '/shared/world.js':['shared/world.js','text/javascript; charset=utf-8'],
-  '/shared/land.js':['shared/land.js','text/javascript; charset=utf-8'],
-  '/shared/i18n.js':['shared/i18n.js','text/javascript; charset=utf-8'],
-  '/assets/slide8-map.png':['public/assets/slide8-map.png','image/png'],
-  '/assets/world-hero.webp':['public/assets/world-hero.webp','image/webp'],
-  '/assets/river-place.webp':['public/assets/river-place.webp','image/webp'],
-  '/assets/meeting.webp':['public/assets/meeting.webp','image/webp']
+  '/app.css':['public/app.css',css],
+  '/game.css':['public/game.css',css]
 };
-for(const module of ['layout','layout-report','flow','flow-copy'])sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,'text/javascript; charset=utf-8'];
-for (const module of ['index', 'resources', 'hex', 'logistics', 'great-work', 'turn-manager']) sourceFiles[`/shared/strategy/${module}.js`]=[`shared/strategy/${module}.js`,'text/javascript; charset=utf-8'];
-for(const point of Object.keys(mapPoints)) {
-  for(const folder of ['portraits','lands']) sourceFiles[`/assets/${folder}/${point}.webp`]=[`public/assets/${folder}/${point}.webp`,'image/webp'];
-}
-sourceFiles['/assets/portraits/guide.webp']=['public/assets/portraits/guide.webp','image/webp'];
-// The strict CSP forbids inline styles, so the map pin positions are served as CSS
-// generated from the one definition in shared/game.js rather than copied into app.css.
-const mapPointCss = Object.entries(mapPoints).map(([letter,[left,top]])=>`.map-dot[data-map="${letter}"]{left:${left}%;top:${top}%}`).join('');
+for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
+for (const module of ['game','cards','regions','glossary','flow','i18n','credits']) sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,js];
+// Every image under public/assets is served at its own path.
+const imageTypes = {'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
+(function addAssets(folder) {
+  for (const name of readdirSync(join(root,folder))) {
+    const path = join(folder,name);
+    if (statSync(join(root,path)).isDirectory()) { addAssets(path); continue; }
+    const type = imageTypes[name.slice(name.lastIndexOf('.')).toLowerCase()];
+    if (type) sourceFiles['/'+path.split(sep).join('/').replace(/^public\//,'')] = [path,type];
+  }
+})('public/assets');
+// The strict CSP forbids inline styles, so the map pins are CSS generated from each
+// region's real latitude and longitude on the Pacific-centred world map.
+const pinX = lon => ((((lon - worldMap.left) % 360) + 360) % 360) / 360 * 100;
+const pinY = lat => (worldMap.top - lat) / (worldMap.top - worldMap.bottom) * 100;
+const mapPointCss = Object.entries(regions).map(([letter,{site:[lat,lon]}])=>{
+  const x=pinX(lon).toFixed(2), y=pinY(lat).toFixed(2);
+  return `.map-dot[data-map="${letter}"]{left:${x}%;top:${y}%}.zoom-${letter}{transform-origin:${x}% ${y}%}`;
+}).join('');
 
 function buildStatic() {
   const table = new Map();
   const put = (route,body,type,immutable) => {
-    const compressible = /^(text\/|application\/json|text\/javascript)/.test(type);
+    const compressible = /^(text\/|application\/json|image\/svg)/.test(type);
     table.set(route,{
       body,type,
       etag:`"${createHash('sha1').update(body).digest('base64url')}"`,
@@ -59,9 +49,9 @@ function buildStatic() {
     });
   };
   for (const [route,[path,type]] of Object.entries(sourceFiles)) {
-    put(route,readFileSync(join(root,path)),type,/\.(webp|png)$/.test(path));
+    put(route,readFileSync(join(root,path)),type,/^image\//.test(type));
   }
-  put('/map-points.css',Buffer.from(mapPointCss),'text/css; charset=utf-8',false);
+  put('/map-points.css',Buffer.from(mapPointCss),css,false);
   return table;
 }
 const staticFiles = buildStatic();
@@ -87,7 +77,7 @@ function writeChunk(client,chunk) {
 const writeEvent = (client,event,payload) => writeChunk(client,`event: ${event}\ndata: ${payload}\n\n`);
 function dropClient(client) {
   clients.delete(client);
-  if (client.token) presence.delete(client.token);
+  if (client.token && ![...clients].some(other => other.token===client.token)) presence.delete(client.token);
   clearInterval(client.keepalive);
 }
 // Names of students currently holding an open event stream for this team. Unlike the
@@ -120,6 +110,10 @@ function broadcastPresence(teamId) {
   const payload = JSON.stringify({roster:liveNames(teamId),fields:presenceFields(teamId)});
   for (const client of [...clients]) if (client.role==='student' && client.teamId===teamId) writeEvent(client,'presence',payload);
 }
+function broadcastReveal() {
+  const payload = JSON.stringify({reveal:revealOpen()});
+  for (const client of [...clients]) writeEvent(client,'reveal',payload);
+}
 function revokeTeam(teamId) {
   for (const client of [...clients]) {
     if (client.role!=='student' || client.teamId!==teamId) continue;
@@ -133,9 +127,18 @@ export function closeStreams() {
 }
 
 const readJson = async req => {
-  let body='';
-  for await (const chunk of req) { body += chunk; if (body.length>12000) throw new Error('Request too large'); }
-  try { return body ? JSON.parse(body) : {}; } catch { throw new Error('Invalid JSON'); }
+  const chunks=[];
+  let length=0;
+  for await (const chunk of req.iterator({destroyOnReturn:false})) {
+    length+=chunk.length;
+    if (length>12000) {req.resume();throw Object.assign(new Error('Request too large'), {status:413});}
+    chunks.push(chunk);
+  }
+  let value;
+  try { value=length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}; }
+  catch { throw new Error('Invalid JSON'); }
+  if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error('Send a JSON object');
+  return value;
 };
 // With trustProxy a single reverse proxy sits in front, and the last X-Forwarded-For entry
 // is the address that proxy actually saw. A client-supplied header lands earlier in the
@@ -151,7 +154,7 @@ const attemptWindow = 10*60_000;
 // A whole class often shares one NAT address, so the student allowance is generous;
 // a wrong code typed by 30 students must not lock the room out. Teacher sign-in stays
 // tight, with a global backstop in case the per-address key is being varied.
-const ceilings = {teacher:12,student:300,world:40};
+const ceilings = {teacher:12,student:300};
 function loginAllowed(req,kind,trustProxy) {
   const now=Date.now();
   if (kind==='teacher') {
@@ -180,24 +183,15 @@ function auth(req,role) {
   if (!session || (role && session.role!==role)) {const e=new Error('Sign in required');e.status=401;throw e;}
   return session;
 }
-const worldCookie = req => (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('civ_world='))?.slice(10);
-function worldAuth(req) {
-  const access = getWorldAccess(worldCookie(req));
-  if (!access) { const error = new Error('Start or join a world'); error.status = 401; throw error; }
-  return access;
-}
-function broadcastWorld(worldId) {
-  for (const client of [...clients]) {
-    if (client.role !== 'world' || client.access.worldId !== worldId) continue;
-    if (!getWorldAccess(client.token)) { dropClient(client); client.res.end(); continue; }
-    writeEvent(client, 'world', JSON.stringify(worldPayload(client.access, client.playerId)));
-  }
-}
 function checkOrigin(req) {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return;
   const origin=req.headers.origin;
   const host=req.headers.host;
-  if (origin && new URL(origin).host!==host) {const e=new Error('Origin not allowed');e.status=403;throw e;}
+  if (origin) {
+    let allowed=false;
+    try { const parsed=new URL(origin);allowed=['http:','https:'].includes(parsed.protocol)&&parsed.host===host; } catch {}
+    if (!allowed) {const e=new Error('Origin not allowed');e.status=403;throw e;}
+  }
   if (req.headers['content-type']?.split(';')[0]!=='application/json') {const e=new Error('JSON required');e.status=415;throw e;}
 }
 function serveStatic(req,res,entry) {
@@ -207,7 +201,8 @@ function serveStatic(req,res,entry) {
   res.writeHead(200,{'Content-Type':entry.type,'Cache-Control':entry.cacheControl,'ETag':entry.etag,'Content-Length':body.length,'Vary':'Accept-Encoding',...(useGzip?{'Content-Encoding':'gzip'}:{})});
   res.end(body);
 }
-export function createAppServer({teacherPassword,secureCookie=false,trustProxy=process.env.TRUST_PROXY==='1'}) {
+// rollDie can be replaced in tests; in class every die is rolled here, never in the browser.
+export function createAppServer({teacherPassword,secureCookie=false,trustProxy=process.env.TRUST_PROXY==='1',rollDie=()=>randomInt(1,7)}) {
   const setCookie=token=>`civ_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=43200${secureCookie?'; Secure':''}`;
   return createServer(async (req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -217,39 +212,12 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
     if (secureCookie) res.setHeader('Strict-Transport-Security','max-age=15552000');
     try { const url=new URL(req.url,'http://localhost'), pathname=url.pathname; checkOrigin(req);
       if (req.method==='GET' && staticFiles.has(pathname)) { serveStatic(req,res,staticFiles.get(pathname)); return; }
-      const worldSetCookie = token => `civ_world=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secureCookie ? '; Secure' : ''}`;
-      if (pathname === '/api/world/create' && req.method === 'POST') {
-        await readJson(req);
-        if (!loginAllowed(req,'world',trustProxy)) { send(res,429,{error:'Too many new worlds. Try again later.'}); return; }
-        const { token } = createWorld();
-        send(res,201,worldPayload(getWorldAccess(token)),{'Set-Cookie':worldSetCookie(token)}); return;
-      }
-      if (pathname === '/api/world/join' && req.method === 'POST') {
-        if (!loginAllowed(req,'world',trustProxy)) { send(res,429,{error:'Too many join attempts. Try again later.'}); return; }
-        const body=await readJson(req), { token }=joinWorld(body.code,body.playerId);
-        send(res,200,worldPayload(getWorldAccess(token)),{'Set-Cookie':worldSetCookie(token)}); return;
-      }
-      if (pathname === '/api/world/me' && req.method === 'GET') { send(res,200,worldPayload(worldAuth(req),url.searchParams.get('player') || undefined)); return; }
-      if (pathname === '/api/world/action' && req.method === 'POST') {
-        const access=worldAuth(req), body=await readJson(req);
-        try { send(res,200,updateWorld(access,body.playerId,body.action)); broadcastWorld(access.worldId); }
-        catch (error) { if (error.status === 409) { send(res,409,{error:error.message,...worldPayload(access,body.playerId)}); return; } throw error; }
-        return;
-      }
-      if (pathname === '/api/world/events' && req.method === 'GET') {
-        const access=worldAuth(req), payload=worldPayload(access,url.searchParams.get('player') || undefined);
-        res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
-        res.write(': connected\n\n');
-        const client={res,role:'world',access,playerId:payload.playerId,token:worldCookie(req)};
-        client.keepalive=setInterval(()=>writeEvent(client,'ping','{}'),20_000); clients.add(client);
-        writeEvent(client,'world',JSON.stringify(payload)); req.on('close',()=>dropClient(client)); return;
-      }
       if (pathname==='/api/health' && req.method==='GET') {send(res,200,{ok:true});return;}
       if (pathname==='/api/me' && req.method==='GET') {
         const session=getSession(cookie(req));
         if (!session) {send(res,200,{authenticated:false});return;}
-        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:listTeams()});
-        else {const team=getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:liveNames(team.id,session.name),presence:presenceFields(team.id)});}
+        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:listTeams(),reveal:revealOpen()});
+        else {const team=getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:liveNames(team.id,session.name),presence:presenceFields(team.id),reveal:revealOpen()});}
         return;
       }
       if (pathname==='/api/auth/teacher' && req.method==='POST') {
@@ -257,7 +225,7 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         const body=await readJson(req);
         if (typeof body.password!=='string' || !sameHash(body.password,teacherPassword)) {send(res,401,{error:'Incorrect teacher password'});return;}
         const {token}=createSession('teacher',null,'Teacher');
-        send(res,200,{authenticated:true,role:'teacher',teams:listTeams()},{'Set-Cookie':setCookie(token)});return;
+        send(res,200,{authenticated:true,role:'teacher',teams:listTeams(),reveal:revealOpen()},{'Set-Cookie':setCookie(token)});return;
       }
       if (pathname==='/api/auth/team' && req.method==='POST') {
         if (!loginAllowed(req,'student',trustProxy)) {send(res,429,{error:'Too many sign-in attempts from this network. Ask your teacher for help.'});return;}
@@ -268,13 +236,16 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         const team=findTeamByCode(normalized);
         if (!team) {send(res,401,{error:'Team code not found'});return;}
         const {token}=createSession('student',team.id,name);
-        send(res,200,{authenticated:true,role:'student',name,team,roster:liveNames(team.id,name),presence:presenceFields(team.id)},{'Set-Cookie':setCookie(token)});
+        send(res,200,{authenticated:true,role:'student',name,team,roster:liveNames(team.id,name),presence:presenceFields(team.id),reveal:revealOpen()},{'Set-Cookie':setCookie(token)});
         broadcastPresence(team.id);return;
       }
       if (pathname==='/api/logout' && req.method==='POST') {
         const token=cookie(req);const session=getSession(token);
         deleteSession(token);presence.delete(token);
         send(res,200,{ok:true},{'Set-Cookie':'civ_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'});
+        for (const client of [...clients]) if (client.token===token) {
+          writeEvent(client,'revoked',JSON.stringify({reason:'logout'}));dropClient(client);try {client.res.end();}catch {}
+        }
         if (session?.teamId) broadcastPresence(session.teamId);return;
       }
       if (pathname==='/api/events' && req.method==='GET') {
@@ -284,6 +255,10 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         const client={res,role:session.role,teamId:session.teamId,name:session.name,token:cookie(req)};
         client.keepalive=setInterval(()=>writeEvent(client,'ping','{}'),20_000);
         clients.add(client);
+        // Reconnecting browsers may have missed both a teammate's action and a reveal.
+        writeEvent(client,'reveal',JSON.stringify({reveal:revealOpen()}));
+        if (session.role==='student') writeEvent(client,'team',JSON.stringify({team:getTeam(session.teamId),roster:liveNames(session.teamId)}));
+        else writeEvent(client,'teams',JSON.stringify({teams:listTeams()}));
         req.on('close',()=>{const teamId=client.teamId;dropClient(client);if (client.role==='student') broadcastPresence(teamId)});
         if (session.role==='student') broadcastPresence(session.teamId);
         return;
@@ -291,7 +266,7 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (pathname==='/api/team/presence' && req.method==='POST') {
         const session=auth(req,'student');const body=await readJson(req);
         const field=body.field==null?null:String(body.field);
-        if (field!==null && !textFields.includes(field)) {send(res,400,{error:'Unknown field'});return;}
+        if (field!==null && !writableFields.includes(field)) {send(res,400,{error:'Unknown field'});return;}
         const token=cookie(req);
         if (field) presence.set(token,{teamId:session.teamId,name:session.name,field});
         else presence.delete(token);
@@ -300,8 +275,8 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (pathname==='/api/team/action' && req.method==='POST') {
         const session=auth(req,'student');const action=await readJson(req);
         let team;
-        try{team=updateTeam(session.teamId,action,session.name);}
-        catch(error){if(error.status===409){send(res,409,{error:error.message,team:getTeam(session.teamId),roster:liveNames(session.teamId,session.name)});return;}throw error;}
+        try{team=updateTeam(session.teamId,action,session.name,rollDie);}
+        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:getTeam(session.teamId),roster:liveNames(session.teamId,session.name)});return;}throw error;}
         send(res,200,{team,roster:liveNames(team.id,session.name),by:session.name});broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/team/submit' && req.method==='POST') {
@@ -309,9 +284,14 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         const team=submitTeam(session.teamId,session.name);
         send(res,200,{team,roster:liveNames(team.id,session.name)});broadcast(team.id,session.name);return;
       }
+      if (pathname==='/api/teacher/reveal' && req.method==='POST') {
+        auth(req,'teacher');const body=await readJson(req);
+        if (typeof body.reveal!=='boolean') {send(res,400,{error:'Send reveal: true or false'});return;}
+        send(res,200,{reveal:setReveal(body.reveal)});broadcastReveal();return;
+      }
       if (pathname==='/api/teacher/teams' && req.method==='POST') {
         auth(req,'teacher');const body=await readJson(req);
-        const team=createTeam(body.name);send(res,201,{team});broadcast(team.id);return;
+        const team=createTeam(body.name,body.point);send(res,201,{team});broadcast(team.id);return;
       }
       if (pathname==='/api/teacher/letter-teams' && req.method==='POST') {
         auth(req,'teacher');await readJson(req);
@@ -356,7 +336,7 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
     } catch(error) {
       if (res.headersSent) {res.end();return;}
       const status=error.status || (error.code==='ENOENT'?404:400);
-      send(res,status,{error:status>=500?'Server error':error.message,gaps:error.gaps});
+      send(res,status,{error:status>=500?'Server error':error.message,code:status>=500?undefined:error.code,gaps:error.gaps});
     }
   });
 }
