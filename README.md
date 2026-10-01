@@ -18,7 +18,7 @@ Run the rules, content, flow and HTTP integration checks with `npm test`. Tests 
 ## Classroom workflow
 
 1. **Meet your place.** Read about its land, climate, resources, challenges and card prices. A new database starts with Team A through Team K, each fixed to its matching place. Extra teams may receive a region from the teacher or choose one before picking cards.
-2. **Build two trees.** Spend up to **7 points in each tree**, with at least one card in each. Follow the arrows: any one chosen parent meets a prerequisite. Free cards still need their prerequisites. Unused points are allowed.
+2. **Build two trees.** Spend up to **7 points in each tree**, with at least one card in each. Follow the arrows: every listed parent must be chosen to meet a prerequisite. Free cards still need their prerequisites. Unused points are allowed.
 3. **Roll the event.** Confirm the team's cards, then roll once. Card editing locks at this point. Make any required event choice and card losses or gains.
 4. **Prepare and present.** Write seven short answers: adaptation to the event, geography and resources, government, economy, beliefs, how technology and culture shaped the society, and what the team did not choose. Select one government, one to three economic activities, and one belief. A civilization name is optional. Review and submit, then use the poster for a three-minute talk.
 5. **Compare with history.** The teacher opens the class-wide reveal when the class is ready. Students see a historical example for their region and compare its developments with their own choices.
