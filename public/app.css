@@ -140,22 +140,25 @@ ul.plain{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 
 #poster-print{display:none}
 @page{size:A4 landscape;margin:10mm}
 @media print{
-  body.printing-posters{background:white}
+  :root:has(body.printing-posters),body.printing-posters{background:white}
   body.printing-posters>*:not(#poster-print){display:none!important}
   body.printing-posters #poster-print{display:block!important}
-  .print-poster{break-after:page;page-break-after:always;color:#111;font-size:8pt;line-height:1.3}
+  .print-poster{break-after:page;page-break-after:always;color:#111;font-size:8.5pt;line-height:1.35}
   .print-poster:last-child{break-after:auto;page-break-after:auto}
   .print-team{margin:0 0 2mm;font-size:9pt;font-weight:700}
-  .print-poster .poster{max-width:none;border-radius:0;box-shadow:none;overflow:visible}
-  .print-poster .poster-head .photo{margin:0;box-shadow:none;border-radius:0}
-  .print-poster .poster-head .photo img{height:25mm;width:100%;object-fit:cover;aspect-ratio:auto}
-  .print-poster .poster-title{position:static;background:none;color:#111;padding:2mm 0;gap:3mm}
-  .print-poster .poster-title h2{font-size:16pt}.print-poster .poster-title p{font-size:8pt;margin:0}
-  .print-poster .poster-letter{min-width:9mm;height:9mm;font-size:13pt;border:1px solid #333;background:none;color:#111}
-  .print-poster .poster-body{display:grid;grid-template-columns:1fr 1fr 2fr;gap:3mm;padding:2mm 0 0}
-  .print-poster .poster-wide{grid-template-columns:repeat(3,minmax(0,1fr));gap:3mm;break-inside:avoid}
-  .print-poster .poster-body h3{font-size:8pt;margin:0 0 1.5mm;letter-spacing:.04em;color:#111}
-  .print-poster .poster-answer h4{font-size:8pt;color:#111;margin:0 0 1mm}
+  /* Two columns on A4 landscape: photo, title, cards and event on the left; the answers on the right. */
+  .print-poster .poster{max-width:none;border-radius:0;box-shadow:none;overflow:visible;display:grid;grid-template-columns:82mm minmax(0,1fr);grid-template-rows:repeat(4,auto) 1fr;column-gap:7mm;align-content:start}
+  .print-poster .poster-head{grid-column:1}
+  .print-poster .poster-head .photo{margin:0;box-shadow:none;border-radius:2mm}
+  .print-poster .poster-head .photo img{height:58mm;width:100%;object-fit:cover;aspect-ratio:auto}
+  .print-poster .poster-title{position:static;background:none;color:#111;padding:3mm 0 1mm;gap:3mm}
+  .print-poster .poster-title h2{font-size:16pt;line-height:1.15}.print-poster .poster-title p{font-size:8pt;margin:0}
+  .print-poster .poster-letter{min-width:10mm;height:10mm;font-size:14pt;border:1px solid #333;background:none;color:#111}
+  .print-poster .poster-body{display:contents}
+  .print-poster .poster-body>section:not(.poster-wide){grid-column:1;margin-top:3mm}
+  .print-poster .poster-wide{grid-column:2;grid-row:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:3mm 5mm;margin-top:0;align-content:start}
+  .print-poster .poster-body h3{font-size:8pt;margin:0 0 1.5mm;letter-spacing:.06em;color:#111}
+  .print-poster .poster-answer h4{font-size:8.5pt;color:#111;margin:0 0 1mm}
   .print-poster .poster-answer{break-inside:avoid;overflow-wrap:anywhere}
   .print-poster .poster-cards{gap:1mm}.print-poster .poster-cards li{font-size:7.5pt;padding:1mm 2mm;background:none;border:1px solid #aaa;border-radius:2mm}
   .print-poster .poster-event{margin:0 0 2mm}

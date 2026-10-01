@@ -56,6 +56,26 @@ test('an economy option invalidated by a card loss can still be removed', () => 
   assert.match(button(html,'chip:economy:trade'),/disabled/);
 });
 
+test('students predict easy and hard before the prices, then answer questions the price list does not', () => {
+  for (const lang of ['en','ja']) {
+    const L = dictionary[lang];
+    assert(visibleText(studentPage(context('challenge',base,lang))).includes(plain(L.predictEasy)));
+    const prices = visibleText(studentPage(context('prices',base,lang)));
+    assert(prices.includes(plain(L.thinkSurprise)) && prices.includes(plain(L.thinkRisk)));
+    assert(!prices.includes(plain(L.predictEasy)));
+  }
+});
+
+test('writing screens keep the team cards, event and society choices in view', () => {
+  const state = applyAction(normalizeState({...base,government:'council'}),{type:'eventRoll',confirm:{tech:base.tech,civic:base.civic}},{rollDie:()=>6});
+  for (const step of ['eventAnswer','geographyAnswer','government','economy','beliefs','shapeAnswer','notChosenAnswer']) {
+    const html = studentPage(context(step,state));
+    const panel = html.match(/<aside class="side-panel"[\s\S]*?<\/aside>/)?.[0] ?? '';
+    for (const name of ['Pottery','Code of Laws','A council of leaders',plain(dictionary.en.event6)]) assert(visibleText(panel).includes(name), `${step}: ${name}`);
+  }
+  for (const step of ['intro1','prices','check','poster']) assert.doesNotMatch(studentPage(context(step,state)),/side-panel/, step);
+});
+
 test('glossary honors language-specific advanced-word eligibility', () => {
   for (const [id,entry] of Object.entries(glossary)) for (const lang of ['en','ja']) {
     const html = rich(`[[${id}|${entry[lang][0]}]]`,lang);
@@ -88,7 +108,10 @@ test('historical comparison includes regional hardships, limits and linked evide
   for (const point of Object.keys(regions)) for (const lang of ['en','ja']) {
     const state = normalizeState({...base,mapPoint:point,fixedPoint:point});
     const html = studentPage(context('revealCompare',state,lang));
-    assert.match(html,/class="history-context"/);
+    // Students discuss first; the historians' notes open on request.
+    assert.match(html,/<details class="history-context"><summary>/);
+    assert(html.indexOf('class="think"') < html.indexOf('class="history-context"'));
+    for (const key of ['surprise','historyAskHarder','historyAskLeftOut']) assert(visibleText(html).includes(plain(dictionary[lang][key])), key);
     assert(visibleText(html).includes(plain(dictionary[lang].historyLimits)));
     for (const line of regions[point].reveal.difficulty[lang]) assert(visibleText(html).includes(plain(line)));
     for (const source of regions[point].reveal.sources) assert(html.includes(source.url));

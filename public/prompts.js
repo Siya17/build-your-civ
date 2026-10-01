@@ -19,11 +19,11 @@ export function starters(key, state, lang) {
       const title = state.event ? plain(L[`event${state.event.roll}`]) : (ja ? 'イベント' : 'the event');
       return ja ? [
         `${title}への対応について、私たちの主張は…ということです。根拠は…です。`,
-        `${science}と${society}が結果につながるしくみは…です。`,
+        '私たちのカードのうち、…と…が結果につながったしくみは…です。',
         '負担が大きかったのは…という集団です。別の対応なら…'
       ] : [
         `Our claim about our response to ${title} is …; the evidence is …`,
-        `The mechanism linking ${science} and ${society} to the result is …`,
+        'Two of our cards, … and …, affected the result through …',
         'The burden fell especially on …; a different response would …'
       ];
     }
@@ -39,11 +39,11 @@ export function starters(key, state, lang) {
     case 'governmentAnswer': {
       const government = chip('government', state.government);
       return ja ? [
-        `${government}を選ぶ根拠は…です。${society}を具体的に使うと…`,
+        `${government}を選ぶ根拠は、私たちのカードの…と…です。具体的には…`,
         '協力を調整するには…が必要です。しかし、権限を持たない…は…',
         '権力の乱用を抑える方法は…です。それにも…という限界があります。'
       ] : [
-        `Our argument for ${government} is …; using ${society} in practice would …`,
+        `Two of our cards, … and …, make ${government} workable because …`,
         'The coordination problem is …; people without authority may …',
         'We would constrain abuses through …, although that safeguard could fail when …'
       ];
