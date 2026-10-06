@@ -15,8 +15,9 @@ export const noteFields = ['predictEasyNote','predictHardNote','surpriseNote','r
 export const noteLimit = 300;
 export const writableFields = [...textFields, 'civName', ...noteFields];
 export const fieldLimit = key => key === 'civName' ? 40 : noteFields.includes(key) ? noteLimit : 1200;
-// Before seeing the regional prices, a team may mark each development as it expects.
-export const predictionMarks = ['easy','normal','hard'];
+// Before seeing the regional prices, a team marks the developments it expects to be easy or
+// difficult; every development it leaves unmarked counts as a "normal" prediction.
+export const predictionMarks = ['easy','hard'];
 export const reflectionFields = ['historyDifferenceAnswer','historyWorkAnswer','historyOmissionAnswer'];
 export const reflectionLimit = 1200;
 const initialReflection = () => ({ ...Object.fromEntries(reflectionFields.map(key => [key,''])), submittedAt:null });
@@ -377,7 +378,8 @@ export function applyAction(previous, action, { rollDie } = {}) {
     state.reflection[action.key] = action.value.replace(/\r/g,'');
   } else if (type === 'predict') {
     if (!Object.hasOwn(cardById, action.id)) throw fail('unknownCard');
-    if (action.mark === '') delete state.predictions[action.id];
+    // Unmarked means normal, so a 'normal' mark is stored as no mark.
+    if (action.mark === '' || action.mark === 'normal') delete state.predictions[action.id];
     else if (predictionMarks.includes(action.mark)) state.predictions[action.id] = action.mark;
     else throw fail('badAction');
   } else if (type === 'field') {

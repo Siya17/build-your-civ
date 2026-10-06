@@ -208,21 +208,29 @@ test('typed historical work is visible and escaped in teacher review, poster and
   }
 });
 
-test('teams mark every development before the ratings, then compare their marks with them', () => {
+test('every development starts as normal; teams mark only easy or difficult ones, then compare with the ratings', () => {
+  const all = [...trees.tech, ...trees.civic];
   for (const lang of ['en','ja']) {
     const L = dictionary[lang];
+    const untouched = studentPage(context('challenge', base, lang));
+    assert.equal((untouched.match(/data-act="mark:/g)||[]).length, all.length);
+    for (const mark of ['easy','hard']) assert(button(untouched, `tool:${mark}`), mark);
+    assert.equal(button(untouched, 'tool:normal'), undefined);
+    assert.match(button(untouched, 'mark:irrigation'), new RegExp(plain(L.markedAs).replace('%s', L.mark_normal)));
     let state = applyAction(base, { type:'predict', id:'irrigation', mark:'easy' });
     state = applyAction(state, { type:'predict', id:'horseback', mark:'easy' });
     const challenge = studentPage(context('challenge', state, lang));
-    assert.equal((challenge.match(/data-act="mark:/g)||[]).length, trees.tech.length + trees.civic.length);
-    for (const mark of ['easy','normal','hard']) assert(button(challenge, `tool:${mark}`), mark);
     assert.match(button(challenge, 'mark:irrigation'), /m-easy/);
     for (const key of ['predictEasyNote','predictHardNote']) assert.match(challenge, new RegExp(`data-field="${key}"[^>]*maxlength="300"`));
     const prices = studentPage(context('prices', state, lang));
     for (const key of ['surpriseNote','riskNote']) assert.match(prices, new RegExp(`data-field="${key}"`));
-    // Nile: Irrigation is ★ (a match); Horseback is △ (differs from "easy").
-    assert(visibleText(prices).includes(plain(L.marksResult.replace('%s','2').replace('%s','1'))));
+    // Nile: Irrigation is ★ (a match); Horseback is △ (differs from "easy"); every other
+    // development counts as a "normal" prediction, which matches only where the rating is standard.
+    const rated = Object.keys(regions.G.prices);
+    const matched = 1 + all.filter(card => !['irrigation','horseback'].includes(card.id) && !rated.includes(card.id)).length;
+    assert(visibleText(prices).includes(plain(L.marksResult.replace('%s','2').replace('%s',matched).replace('%s',all.length))));
     assert.match(prices, /mark-result m-easy ok/);
     assert.match(prices, /mark-result m-easy differs/);
+    assert.match(prices, /mark-result m-normal differs/);
   }
 });

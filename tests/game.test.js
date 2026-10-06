@@ -686,17 +686,20 @@ test('historical reflection has separate answers, validation, normalization and 
   assert.equal(malformed.reflection.submittedAt,null);
 });
 
-test('team prediction marks can be set, changed and cleared, and only valid marks survive a save', () => {
+test('team prediction marks default to normal, can be set, changed and cleared, and only valid marks survive a save', () => {
   let state = start('G');
+  assert.deepEqual(state.predictions, {});
   state = applyAction(state, { type:'predict', id:'irrigation', mark:'easy' });
   state = applyAction(state, { type:'predict', id:'horseback', mark:'hard' });
-  state = applyAction(state, { type:'predict', id:'irrigation', mark:'normal' });
-  assert.deepEqual(state.predictions, { irrigation:'normal', horseback:'hard' });
+  state = applyAction(state, { type:'predict', id:'wheel', mark:'easy' });
+  state = applyAction(state, { type:'predict', id:'irrigation', mark:'hard' });
+  assert.deepEqual(state.predictions, { irrigation:'hard', horseback:'hard', wheel:'easy' });
+  state = applyAction(state, { type:'predict', id:'wheel', mark:'normal' });
   state = applyAction(state, { type:'predict', id:'irrigation', mark:'' });
   assert.deepEqual(state.predictions, { horseback:'hard' });
   assert.throws(() => applyAction(state, { type:'predict', id:'irrigation', mark:'maybe' }));
   assert.throws(() => applyAction(state, { type:'predict', id:'not-a-card', mark:'easy' }));
-  assert.deepEqual(normalizeState({ ...state, predictions:{ sailing:'easy', fake:'easy', wheel:'soon' } }).predictions, { sailing:'easy' });
+  assert.deepEqual(normalizeState({ ...state, predictions:{ sailing:'easy', fake:'easy', wheel:'soon', laws:'normal' } }).predictions, { sailing:'easy' });
 });
 
 test('short team notes save up to 300 characters and are never required for submission', () => {

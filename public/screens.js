@@ -83,8 +83,7 @@ function notes(ctx, items) {
 // What a regional price means as a prediction: ★ easy, unlisted normal, △ or ✗ difficult.
 const expectedMark = price => price === 'free' ? 'easy' : price === 'normal' ? 'normal' : 'hard';
 function markResult(ctx, id) {
-  const { team, L } = ctx, mark = team.state.predictions?.[id];
-  if (!mark) return '';
+  const { team, L } = ctx, mark = team.state.predictions?.[id] || 'normal';
   const ok = mark === expectedMark(priceOf(team.state.mapPoint, id));
   return `<span class="mark-result m-${mark} ${ok ? 'ok' : 'differs'}">${esc(fmt(L.yourMark, L[`mark_${mark}`]))} · ${ok ? `✓ ${esc(L.markMatch)}` : `≠ ${esc(L.markDiffers)}`}</span>`;
 }
@@ -180,10 +179,10 @@ const screens = {
     return { title:rich(L.challengeTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/challenge.webp`, plain(region.challenge[lang][0]), { eager:true })}<ul class="challenge-list">${region.challenge[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul></div><section class="mark-panel"><h2>🏷️ ${rich(L.markTitle, lang)}</h2><p>${rich(L.markLead, lang)}</p>${tools}${markTrees}</section>${notes(ctx, [['predictEasyNote', L.predictEasy], ['predictHardNote', L.predictHard]])}`, primary:next(L) };
   },
   prices(ctx) {
-    const { L, lang, team } = ctx, marked = Object.entries(team.state.predictions || {});
-    const matched = marked.filter(([id, mark]) => mark === expectedMark(priceOf(team.state.mapPoint, id))).length;
+    const { L, lang, team } = ctx, predictions = team.state.predictions || {}, all = [...trees.tech, ...trees.civic];
+    const matched = all.filter(card => (predictions[card.id] || 'normal') === expectedMark(priceOf(team.state.mapPoint, card.id))).length;
     return { title:rich(L.pricesTitle, lang), lead:rich(L.pricesLead, lang), wide:true,
-      body:`${marked.length ? `<p class="marks-result">${esc(fmt(L.marksResult, marked.length, matched))}</p>` : ''}<div class="price-groups">${priceList(ctx,'free')}${priceList(ctx,'hard')}${priceList(ctx,'impossible')}</div>${notes(ctx, [['surpriseNote', L.thinkSurprise], ['riskNote', L.thinkRisk]])}`, primary:next(L) };
+      body:`<p class="marks-result">${esc(fmt(L.marksResult, Object.keys(predictions).length, matched, all.length))}</p><div class="price-groups">${priceList(ctx,'free')}${priceList(ctx,'hard')}${priceList(ctx,'impossible')}</div>${notes(ctx, [['surpriseNote', L.thinkSurprise], ['riskNote', L.thinkRisk]])}`, primary:next(L) };
   },
   techIntro: ctx => treeIntro(ctx, 'tech'),
   civicIntro: ctx => treeIntro(ctx, 'civic'),

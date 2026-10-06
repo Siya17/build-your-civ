@@ -17,10 +17,10 @@ function nodeState(state, tree, id) {
 }
 
 function nodeMarkup(state, tree, card, lang, L, flags) {
-  // Prediction cards: a tap applies the team's chosen marker (easy, normal or difficult).
+  // Prediction cards: a tap applies the team's chosen marker (easy or difficult); unmarked is normal.
   if (flags.mark) {
     const mark = flags.marks?.[card.id] || '', tip = plain(card.summary[lang]);
-    return `<button type="button" class="node c${card.col} r${card.row} is-mark${mark ? ` m-${mark}` : ''}" data-act="mark:${card.id}" data-tip="${esc(tip)}" aria-label="${esc(`${cardPlain(card, lang)}. ${mark ? fmt(L.markedAs, L[`mark_${mark}`]) : L.notMarked}`)}" ${flags.locked ? 'disabled' : ''}><span class="node-icon" aria-hidden="true">${card.icon}</span><span class="node-name">${cardName(card, lang)}</span>${mark ? `<span class="node-mark" aria-hidden="true">${esc(L[`mark_${mark}`])}</span>` : ''}</button>`;
+    return `<button type="button" class="node c${card.col} r${card.row} is-mark${mark ? ` m-${mark}` : ''}" data-act="mark:${card.id}" data-tip="${esc(tip)}" aria-label="${esc(`${cardPlain(card, lang)}. ${fmt(L.markedAs, L[`mark_${mark || 'normal'}`])}`)}" ${flags.locked ? 'disabled' : ''}><span class="node-icon" aria-hidden="true">${card.icon}</span><span class="node-name">${cardName(card, lang)}</span>${mark ? `<span class="node-mark" aria-hidden="true">${esc(L[`mark_${mark}`])}</span>` : ''}</button>`;
   }
   // Preview cards carry a short definition: a floating tip on hover or focus, the full text on click.
   if (flags.preview) { const tip = plain(card.summary[lang]); return `<button type="button" class="node c${card.col} r${card.row} is-preview" data-preview="${tree}:${card.id}" data-tip="${esc(tip)}" aria-label="${esc(`${cardPlain(card, lang)}: ${tip}`)}"><span class="node-icon" aria-hidden="true">${card.icon}</span><span class="node-name">${cardName(card, lang)}</span></button>`; }
