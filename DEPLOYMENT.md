@@ -1,21 +1,65 @@
-# Deploy to Vercel and Firebase
+# Put Build Your Own Civilization online
 
-This deployment uses Vercel for the website and API, Firebase Authentication for read access to live updates, and Cloud Firestore for persistent classroom work. Students still use a team code and name; teachers still use the private teacher password. No Firebase Cloud Functions or Cloud Storage are used.
+This guide works with your own repository and accounts. No particular school, organization, GitHub username, or custom domain is required.
 
-Firebase's Spark plan requires no payment information. Vercel Hobby is free for personal, non-commercial projects; Vercel's definition includes paid development work, so check that your university use fits its [fair-use guidelines](https://vercel.com/docs/limits/fair-use-guidelines). See [Firebase plans](https://firebase.google.com/docs/projects/billing/firebase-pricing-plans).
+## What you are setting up
 
-## 1. Create Firebase
+Think of the app as three parts:
 
-1. In the [Firebase console](https://console.firebase.google.com/), create a project and keep it on **Spark**. Google Analytics is optional and is not used by this app.
-2. Open **Build → Firestore Database → Create database**. Create the **default database**, using **Standard edition** and **Production mode**. For a class in Japan, a Tokyo location is a reasonable choice; the location cannot be changed later.
-3. Open **Authentication** and click **Get started**. The app uses custom tokens issued by its own API; no email, phone or Google sign-in provider is required.
-4. In **Project settings → General**, add a **Web app**. Firebase Hosting is not needed. Copy the `firebaseConfig` values for the Vercel environment variable below.
-5. Open **Firestore Database → Rules**. Replace the initial rules with the complete contents of [firestore.rules](firestore.rules), then click **Publish**. These rules allow signed-in students to read only their own team's work and signed-in teachers to read all teams. All browser writes are denied; the Vercel API validates changes.
-6. Open **Project settings → Service accounts → Firebase Admin SDK → Generate new private key**. Download the JSON to a private location outside the repository. Its complete contents become the `FIREBASE_SERVICE_ACCOUNT` environment variable in Vercel. This file is a secret; it never goes into browser code or GitHub.
+- **Vercel is the front door.** It hosts the website and runs the code that checks sign-ins and game actions.
+- **Firestore is the notebook.** It remembers teams, answers, and dice rolls after everyone closes their browser.
+- **Firebase Authentication is the entry pass for live updates.** It lets each team see its own saved work. Students still enter a team code and name, not a Firebase password.
 
-## 2. Create Vercel
+When someone chooses a card, the browser asks the Vercel server to save it. The server checks the rules, saves the result in Firestore, and teammates receive the update. Dice are rolled by the server, then saved.
 
-Commit and push this deployment code to GitHub first. In [Vercel](https://vercel.com/new), import `Siya17/build-your-civ` as a new project. Use **Other** as the framework preset and leave the root directory at the repository root. `vercel.json` supplies these settings:
+You set this up once. After deployment, students need only the website link and their team code. Your computer can be switched off.
+
+## Before you begin
+
+You need a GitHub account, a Vercel account, and a Google account for Firebase. Put this project in a GitHub repository you own or can deploy. If it is already there, push your latest changes first.
+
+Use a Vercel plan that fits your use. Review [Vercel's usage guidelines](https://vercel.com/docs/limits/fair-use-guidelines) and [Firebase's plans](https://firebase.google.com/docs/projects/billing/firebase-pricing-plans). The app does not need Firebase Hosting, Cloud Functions, or Cloud Storage.
+
+Keep secret files out of Git. The repository ignores `.env`, but that file is **not automatically uploaded to Vercel or loaded by `npm start`**. For the online app, enter the variables in Vercel as described below.
+
+## Step 1: Create the place where work is saved
+
+1. Open the [Firebase console](https://console.firebase.google.com/) and create a project. Choose your own project name. The Spark plan can be used. Google Analytics is optional; the app does not use it.
+2. Open **Build → Firestore Database → Create database**.
+3. Create the **default database**, choose **Standard edition**, and choose **Production mode**. Pick a location near your users. Choose carefully: the database location cannot be changed later.
+4. Open **Authentication** and click **Get started**. You do not need to enable Google, email, or phone sign-in. This app supplies its own sign-in tokens.
+5. Open **Firestore Database → Rules**. Copy all the text from [firestore.rules](firestore.rules), replace the editor's contents, and click **Publish**. Do not use open/test rules. These rules let students read their own team and teachers read all teams; the server handles writes.
+
+## Step 2: Copy two Firebase settings
+
+These are different things. You need both.
+
+### A. The website settings
+
+In Firebase, open **Project settings → General**, then register a **Web app** using the web icon. You do not need Firebase Hosting.
+
+Firebase shows a block beginning with `const firebaseConfig = ...`. Copy its values into this format:
+
+```json
+{"apiKey":"YOUR_API_KEY","authDomain":"YOUR_PROJECT_ID.firebaseapp.com","projectId":"YOUR_PROJECT_ID","appId":"YOUR_APP_ID"}
+```
+
+Replace every placeholder with your own value. Keep the double quotes around both names and values. Do not include `const firebaseConfig =`, comments, or a semicolon. This is the value for `FIREBASE_WEB_CONFIG` in Step 3. These web settings are meant to be visible in the browser.
+
+### B. The private server key
+
+In Firebase, open **Project settings → Service accounts → Firebase Admin SDK → Generate new private key**. Download the JSON file somewhere private, outside this repository.
+
+Open it in a text editor. Its **entire contents**, including the opening and closing braces, are the value for `FIREBASE_SERVICE_ACCOUNT` in Step 3. Keep the `\n` characters inside the private key exactly as downloaded. Do not paste this file into GitHub, the website, or a chat.
+
+Both settings must belong to the same Firebase project: the server key's `project_id` must match the website settings' `projectId`.
+
+## Step 3: Connect the repository to Vercel
+
+1. Open [Vercel's new-project page](https://vercel.com/new).
+2. Import **your own GitHub repository** containing this app.
+3. Choose **Other** for the framework. Use the folder containing `package.json` and `vercel.json` as the root directory.
+4. Confirm these settings. The checked-in `vercel.json` supplies the install, build, and output settings.
 
 | Setting | Value |
 | --- | --- |
@@ -24,58 +68,104 @@ Commit and push this deployment code to GitHub first. In [Vercel](https://vercel
 | Output directory | `dist` |
 | Node.js version | `24.x` |
 
-Before deploying, add these environment variables to **Production**:
+5. Before clicking Deploy, add these four environment variables for **Production**. An environment variable is simply a named setting supplied privately to the server.
 
-| Variable | Value |
+| Name: copy exactly | Value: supply your own |
 | --- | --- |
-| `TEACHER_PASSWORD` | Your private teacher password, at least 12 characters |
-| `SESSION_SECRET` | A random secret of at least 32 characters; retain it across redeployments |
-| `FIREBASE_SERVICE_ACCOUNT` | The complete downloaded service-account JSON |
-| `FIREBASE_WEB_CONFIG` | The web app's configuration as valid JSON, shown below |
+| `TEACHER_PASSWORD` | A private password with at least 12 characters. This is what you enter on the teacher sign-in screen. |
+| `SESSION_SECRET` | A random secret with at least 32 characters. Generate it using the command below and keep it unchanged across deployments. |
+| `FIREBASE_SERVICE_ACCOUNT` | The complete private JSON file from Step 2B. |
+| `FIREBASE_WEB_CONFIG` | The JSON website settings from Step 2A. |
 
-Generate `SESSION_SECRET` locally in PowerShell with:
+If Node.js is installed, run this command in a terminal to generate `SESSION_SECRET`:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-`FIREBASE_WEB_CONFIG` must be JSON, rather than the JavaScript `const firebaseConfig = ...` assignment. Replace the placeholders with your web app's values:
+Paste the result as the value. Do not wrap the value in extra quotation marks. For the two JSON settings, paste the JSON object itself, not a filename. You do not need `HOST`, `PORT`, or `DATA_DIR` on Vercel.
 
-```json
-{"apiKey":"YOUR_API_KEY","authDomain":"YOUR_PROJECT_ID.firebaseapp.com","projectId":"YOUR_PROJECT_ID","appId":"YOUR_APP_ID"}
+6. Click **Deploy** and wait for the deployment to become ready.
+7. Copy the production website address Vercel gives you, such as `https://your-project.vercel.app`.
+8. In Firebase, open **Authentication → Settings → Authorized domains**. Add the website's hostname, such as `your-project.vercel.app`, without `https://` or a path.
+
+Use the Production address. Preview deployments need their own variables and preferably a separate Firebase project so testing does not change the live activity.
+
+Open the address in a signed-out browser before sharing it. If it asks for a **Vercel login**, students cannot reach the app yet. In the Vercel project's **Settings → Deployment Protection**, check which deployments are protected and use a Production deployment that permits public access. The app's own team-code and teacher-password sign-in still applies. A URL containing `-git-` is a branch address; check the deployment's environment in Vercel rather than assuming it is Production. See [Vercel Authentication](https://vercel.com/docs/deployment-protection/methods-to-protect-deployments/vercel-authentication).
+
+**If you change any Vercel environment variable later, redeploy.** Changing a saved setting does not update an already running deployment.
+
+## Step 4: Check that it actually works
+
+Do these checks before sharing the link:
+
+1. Add `/api/health` to the production address and open it. For example: `https://your-project.vercel.app/api/health`. You should see `{"ok":true}`. This checks server initialization and Firestore setup; the next checks also verify sign-in and live access.
+2. Open the normal home page. Choose **Teacher**, then enter the password from Step 3. The first server startup creates Teams A–K with their places and join codes.
+3. Copy one team code. Open two separate browser sessions, such as a normal window and a private window. Join the same team with different names in both sessions. Two private windows in the same browser may share a login, so use separate browsers if necessary.
+4. Choose a card or edit an answer. Confirm that the change appears in the other session.
+5. On the teacher dashboard, open and close the historical reveal. Submitted teams should be able to enter the history screens only while the reveal is open.
+6. Reload. Saved work should still be there. Later deployments using the same Firebase project and `SESSION_SECRET` should retain it too.
+
+## What everyone does during the activity
+
+1. **Teacher:** sign in, find the team codes, and give each group the website link and its code.
+2. **Students:** enter their name and code. Everyone with the same code works on the same civilization.
+3. **Team:** read about the place and its resources, look through the developments, and predict which ones will be easy or difficult there.
+4. **Team:** choose cards in the Science and Society trees. Each tree has its own 7-point budget. Follow the arrows; required earlier cards must be selected first.
+5. **Team:** confirm the choices and roll the event. The app saves the dice result and locks normal tree editing. Follow any instructions to gain or lose cards.
+6. **Team:** name the civilization, choose its government, economy, and beliefs, and write the seven explanations. Review and submit. Use the poster to present.
+7. **Teacher:** open the historical reveal when the class is ready.
+8. **Team:** read the historical example, answer the three comparison questions, and submit that reflection separately.
+
+Answers save automatically. Wait for saving to finish before closing the page. Students can read different screens without moving their teammates. The teacher can reopen submitted work when changes are needed.
+
+## If you see “Unexpected token 'A' … is not valid JSON”
+
+This means the browser expected structured app data, but received ordinary text beginning with something like “A server error…”. That message alone does **not** identify the server failure. The updated client shows a readable server-response error instead of the JSON parsing error.
+
+1. Make sure the latest code has been pushed and deployed.
+2. Open `/api/health` on the same website.
+3. If it fails, open that deployment in Vercel and inspect its **Runtime Logs**. If the build failed, inspect its **Build Logs** instead. Trigger `/api/health` again to get a fresh log entry.
+4. Confirm Node.js is `24.x`, all four Production variables are set, both JSON values are valid, the Firebase project IDs match, and the default Firestore database exists.
+5. Correct the setting identified by the logs, **redeploy**, then repeat Step 4 above.
+
+Startup errors caught by the API return JSON with HTTP 503 and a setup message. Hosting failures that happen before the function runs can still return plain text or HTML; the browser handles those without exposing the raw response.
+
+| What you see | What to check |
+| --- | --- |
+| `/api/health` returns 503 and a setup message | Check the Vercel Runtime Logs for the initialization error. Verify variables, JSON, credentials, and Firestore setup. |
+| `/api/health` returns plain text, HTML, 404, or a hosting error | Check the deployed commit, root directory, Node version, build logs, function logs, and the checked-in `vercel.json`. |
+| The website or `/api/health` redirects to Vercel sign-in | Deployment Protection is blocking public access. Use a publicly accessible Production URL and test it while signed out of Vercel. |
+| Teacher sign-in works but updates keep reconnecting | Confirm Firebase Authentication was initialized, the API key belongs to the same project, the Firestore rules were published, and the hostname is authorized. |
+| Settings were fixed but the error remains | Redeploy, then open the new Production deployment. |
+| Preview says setup is incomplete | Use Production, or configure separate Preview variables. |
+| Work is missing | Verify that the deployment still uses the same Firebase project. Local SQLite data is not copied online automatically. |
+
+## Keep the saved work
+
+The online app starts a new classroom in Firestore. Local work remains in the local `data/` folder. Keep the same Firebase project and `SESSION_SECRET` for redeployments. Changing the secret invalidates sessions and join-code lookups.
+
+Monitor the Firebase Usage page. Actions and live updates use database reads and writes. See [Firestore quotas and pricing](https://firebase.google.com/docs/firestore/pricing) for current limits. A free plan's quota can stop the activity until it resets.
+
+## Optional: run on your own computer
+
+Install Node.js **24.x**, open a terminal in the project folder, and run:
+
+```powershell
+npm ci
+$env:TEACHER_PASSWORD = 'choose-a-private-password-at-least-12-characters'
+npm run dev
 ```
 
-The web configuration and service account must refer to the same Firebase project. Paste secret values directly into Vercel's environment-variable form. No `HOST`, `PORT`, `DATA_DIR`, Firebase billing account, persistent disk, or custom domain is needed. Production credentials are intentionally not shared with Preview deployments; a Preview needs its own Firebase project and environment variables to avoid editing the live class.
+Open the address printed in the terminal, usually [http://127.0.0.1:5173](http://127.0.0.1:5173). This version uses SQLite on your computer and does not need Firebase. The PowerShell password command applies to that terminal session.
 
-Click **Deploy**. Vercel will give you a `https://…vercel.app` address. In Firebase **Authentication → Settings → Authorized domains**, add that Vercel hostname (without `https://` or a path).
+Before deploying code changes, run:
 
-## 3. Check the online classroom
+```powershell
+npm test
+npm run build
+```
 
-1. Visit `/api/health` on the deployed URL. It should show `{"ok":true}`.
-2. Open the home page and sign in as **Teacher**. The first successful startup creates Team A through Team K, each with its own place and team code.
-3. Open two private browser windows, sign in to the same team with different names, and confirm that a card or answer change appears in both windows.
-4. From the teacher dashboard, open and close the historical reveal and check that the student windows follow it.
-5. Reload the page and redeploy the same code. Teams, saved answers and dice results should remain in Firestore.
+The tests cover game behavior, local HTTP requests, and deployment error handling. The build creates `dist/`, including the browser Firebase code. These checks do not prove that your online credentials and permissions are correct: complete Step 4 on the deployed site too.
 
-Give students the public Vercel address and their team code. Your laptop can be switched off after deployment.
-
-## Storage and free quotas
-
-This starts a **new online classroom**. Local SQLite work is retained on your laptop and is not uploaded automatically. Keep the same Firebase project and `SESSION_SECRET` for later deployments. Changing the secret invalidates existing sessions and the join-code lookup hashes.
-
-Firestore's free Standard-edition quota is 1 GiB storage, 50,000 document reads/day and 20,000 writes/day. Team actions, activity entries, sign-in limits, presence heartbeats and live listeners consume quota. Text saves are debounced and presence heartbeats run every 45 seconds. Check the Firebase Usage page after a class; usage depends on class length and student activity. On Spark, operations stop at the quota rather than producing pay-as-you-go charges. See [Firestore pricing](https://firebase.google.com/docs/firestore/pricing).
-
-The API checks session expiry on every request. Firestore Rules check the same sessions for live reads. Deleted teams lose read access immediately; code rotation prevents new sign-ins with the old code and retains already signed-in students, matching local behavior. Dice and state changes are committed together, with database transaction retries unable to reroll a successful event.
-
-## Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| `/api/health` returns 503 | Vercel environment variables, valid JSON, default Firestore database, and matching Firebase project IDs; inspect the function logs |
-| Sign-in works but updates show reconnecting | Authentication has been initialized, the supplied web API key matches the project, Firestore Rules have been published, and the Vercel hostname is authorized |
-| A Preview says setup is incomplete | Production credentials are not enabled in Preview; use the Production URL |
-| Work disappears after a new deployment | Confirm it uses the same Firebase project; this app does not use server-local files on Vercel |
-
-## Local checks
-
-`npm test` checks the existing classroom behavior and local SQLite server. `npm run build` packages the Vercel site and browser Firebase SDK. To verify Firestore transactions and read permissions against the emulator, install Java 21 or newer and run `npm run test:firebase`. The emulator uses the fictional project `demo-build-your-civ` and never touches your real Firebase project.
+For additional Firestore transaction and permission checks, install Java 21 or newer and run `npm run test:firebase`. This uses the emulator project `demo-build-your-civ`, not a real Firebase project.

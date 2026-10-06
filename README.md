@@ -1,12 +1,15 @@
 # Build Your Own Civilization
 
-A bilingual English/Japanese classroom activity for Tama University Week 2. Teams learn about one of eleven places, build Science and Society trees, adapt to a dice event, and present their choices before the teacher opens the historical reveal.
+A bilingual English/Japanese group activity for exploring how geography shapes a civilization. Teams learn about one of eleven places, build Science and Society trees, adapt to a dice event, and present their choices before the teacher opens the historical reveal.
+
+For a plain-language explanation of the activity and a step-by-step online setup, start with [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Run locally
 
-Requires Node.js 24 or newer. No npm packages are needed.
+Requires Node.js 24.x. Install the project dependencies first.
 
 ```powershell
+npm ci
 $env:TEACHER_PASSWORD = 'choose-a-long-private-password'
 npm run dev
 ```
@@ -59,7 +62,7 @@ The Newcomers choice is final, and the screen previews both outcomes. The Foreig
 
 ## Shared progress and teacher controls
 
-Students join with their team's code and their name, without a university account. Codes such as `A-427` accept case changes and punctuation; older join codes remain valid. The teacher can create teams, add missing A–K teams, replace join codes, review work and activity, print posters, delete teams, and reopen submissions.
+Students join with their team's code and their name, without individual accounts. Codes such as `A-427` accept case changes and punctuation; older join codes remain valid. The teacher can create teams, add missing A–K teams, replace join codes, review work and activity, print posters, delete teams, and reopen submissions.
 
 Each team's cards, rolls, event, selections and answers are shared through live updates. Reading screens and navigation belong to each device, so students can review without moving teammates. Late joiners can read the introductions or jump to their team's current task. Dice results are generated and saved by the server inside the same database transaction as the action. The browser never supplies a result.
 
@@ -81,7 +84,7 @@ Old teams may exceed the new budget or have △ cards without a stored roll. The
 
 ## Content and attribution
 
-The supplied Week 2 slides define the A–K locations and event rules; the Science and Civics flowcharts supply the development cards. Slide 18 supplies only the Nile example: ★ Irrigation, ★ Sailing, △ Horseback. The existing prices for the other ten regions, and their geography explanations, were authored for this implementation. They are classroom assumptions for instructor review, rather than price tables transcribed from the slides. They were checked against sources in October 2026: Yellow River Bronze is now an ordinary card because tin was scarce there, while its ★ Animal Husbandry reflects early pig domestication in the middle Yellow River; Zimbabwe's Foreign Trade is an ordinary card, keeping each region to three ★ cards at most; Andes Irrigation is ★ because coastal farming depended on canals, Greenland's △ Irrigation reflects the labour of Norse hayfield irrigation, and its ★ Craftsmanship reflects skilled work with scarce materials. All unspecified cards cost 1 point. Edit `shared/regions.js` to revise a table; avoid changing prices during a class because saved teams may then become invalid or exceed their budgets.
+The source lesson materials define the A–K locations and event rules; the Science and Civics flowcharts supply the development cards. Slide 18 supplies only the Nile example: ★ Irrigation, ★ Sailing, △ Horseback. The existing prices for the other ten regions, and their geography explanations, were authored for this implementation. They are classroom assumptions for instructor review, rather than price tables transcribed from the slides. They were checked against sources in October 2026: Yellow River Bronze is now an ordinary card because tin was scarce there, while its ★ Animal Husbandry reflects early pig domestication in the middle Yellow River; Zimbabwe's Foreign Trade is an ordinary card, keeping each region to three ★ cards at most; Andes Irrigation is ★ because coastal farming depended on canals, Greenland's △ Irrigation reflects the labour of Norse hayfield irrigation, and its ★ Craftsmanship reflects skilled work with scarce materials. All unspecified cards cost 1 point. Edit `shared/regions.js` to revise a table; avoid changing prices during a class because saved teams may then become invalid or exceed their budgets.
 
 Climate charts are rounded modern station averages with a source label in each region. A dashed overlay estimates conditions around 2000 BCE by shifting today's averages by a temperature change and a rainfall factor taken from cited palaeoclimate research; these are coarse classroom estimates, not reconstructed monthly values. Every historical example dates from about 2000 BCE or earlier, and each reading names its period. Card trees simplify development for discussion and do not claim a universal sequence or imply that geography determines a society's choices.
 

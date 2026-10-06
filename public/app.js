@@ -48,7 +48,16 @@ function renderNotice(){noticeBox.innerHTML=notice?`<div class="toast ${noticeTy
 const message=error=>L().errors?.[error.code]??L()[error.code]??error.message??L().error;
 async function api(path,body,method){
   const res=await fetch(path,{method:method||(body===undefined?'GET':'POST'),headers:body===undefined&&!method?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
-  const data=await res.json();
+  let data;
+  try {
+    data=await res.json();
+    if(!data || typeof data!=='object' || Array.isArray(data))throw new Error('Invalid API response');
+  } catch {
+    const detail=lang==='ja'
+      ? `サーバーから正常な応答がありません（HTTP ${res.status}）。少し待って再試行してください。続く場合は、先生にデプロイ設定とサーバーログの確認を依頼してください。`
+      : `The server did not return a valid response (HTTP ${res.status}). Try again shortly. If this continues, ask the teacher to check the deployment settings and server logs.`;
+    throw Object.assign(new Error(detail),{status:res.status,code:'SERVER_RESPONSE_INVALID'});
+  }
   if(!res.ok)throw Object.assign(new Error(data.error||L().error),{code:data.code,gaps:data.gaps,status:res.status,team:data.team});
   return data;
 }
