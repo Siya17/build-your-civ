@@ -143,25 +143,29 @@ ul.plain{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 
   :root:has(body.printing-posters),body.printing-posters{background:white}
   body.printing-posters>*:not(#poster-print){display:none!important}
   body.printing-posters #poster-print{display:block!important}
-  .print-poster{break-after:page;page-break-after:always;color:#111;font-size:8.5pt;line-height:1.35}
+  .print-poster{break-after:page;page-break-after:always;color:#111;font-size:9.5pt;line-height:1.4}
   .print-poster:last-child{break-after:auto;page-break-after:auto}
   .print-team{margin:0 0 2mm;font-size:9pt;font-weight:700}
-  /* Two columns on A4 landscape: photo, title, cards and event on the left; the answers on the right. */
-  .print-poster .poster{max-width:none;border-radius:0;box-shadow:none;overflow:visible;display:grid;grid-template-columns:82mm minmax(0,1fr);grid-template-rows:repeat(4,auto) 1fr;column-gap:7mm;align-content:start}
-  .print-poster .poster-head{grid-column:1}
+  /* A4 landscape: a header band (photo and name | developments | event), then every answer
+     flowing through three columns, continuing onto the next page only when it is needed. */
+  .print-poster .poster{max-width:none;border-radius:0;box-shadow:none;overflow:visible;display:grid;grid-template-columns:66mm minmax(0,1fr) minmax(0,1fr);grid-template-areas:"head sci ev" "head soc ev" "talk talk talk" "refl refl refl";column-gap:6mm;row-gap:2mm;align-content:start}
+  .print-poster .poster-head{grid-area:head}
   .print-poster .poster-head .photo{margin:0;box-shadow:none;border-radius:2mm}
-  .print-poster .poster-head .photo img{height:58mm;width:100%;object-fit:cover;aspect-ratio:auto}
-  .print-poster .poster-title{position:static;background:none;color:#111;padding:3mm 0 1mm;gap:3mm}
-  .print-poster .poster-title h2{font-size:16pt;line-height:1.15}.print-poster .poster-title p{font-size:8pt;margin:0}
-  .print-poster .poster-letter{min-width:10mm;height:10mm;font-size:14pt;border:1px solid #333;background:none;color:#111}
+  .print-poster .poster-head .photo img{height:36mm;width:100%;object-fit:cover;aspect-ratio:auto}
+  .print-poster .poster-title{position:static;background:none;color:#111;padding:2mm 0 0;gap:2.5mm}
+  .print-poster .poster-title h2{font-size:14pt;line-height:1.15}.print-poster .poster-title p{font-size:7.5pt;margin:0}
+  .print-poster .poster-letter{min-width:9mm;height:9mm;font-size:12pt;border:1px solid #333;background:none;color:#111}
   .print-poster .poster-body{display:contents}
-  .print-poster .poster-body>section:not(.poster-wide){grid-column:1;margin-top:3mm}
-  .print-poster .poster-wide{grid-column:2;grid-row:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:3mm 5mm;margin-top:0;align-content:start}
+  .print-poster .poster-sci{grid-area:sci}.print-poster .poster-soc{grid-area:soc}.print-poster .poster-ev{grid-area:ev}
+  .print-poster .poster-wide{grid-area:talk;display:block;column-count:3;column-gap:6mm;column-fill:balance;margin-top:3mm;padding-top:3mm;border-top:.3mm solid #999}
+  .print-poster .poster-wide.poster-reflection{grid-area:refl}
+  .print-poster .poster-wide h3{column-span:all;margin-bottom:2mm}
   .print-poster .poster-body h3{font-size:8pt;margin:0 0 1.5mm;letter-spacing:.06em;color:#111}
-  .print-poster .poster-answer h4{font-size:8.5pt;color:#111;margin:0 0 1mm}
-  .print-poster .poster-answer{break-inside:avoid;overflow-wrap:anywhere}
-  .print-poster .poster-cards{gap:1mm}.print-poster .poster-cards li{font-size:7.5pt;padding:1mm 2mm;background:none;border:1px solid #aaa;border-radius:2mm}
-  .print-poster .poster-event{margin:0 0 2mm}
+  .print-poster .poster-answer{margin:0 0 3mm;overflow-wrap:anywhere}
+  .print-poster .poster-answer h4{font-size:9.5pt;color:#111;margin:0 0 1mm;break-after:avoid}
+  .print-poster .poster-answer p{orphans:3;widows:3}
+  .print-poster .poster-cards{gap:1mm}.print-poster .poster-cards li{font-size:7.5pt;padding:.8mm 2mm;background:none;border:1px solid #aaa;border-radius:2mm}
+  .print-poster .poster-event{margin:0}
   .print-poster .status{font-size:7pt;padding:0 1mm}
   .print-poster .credit{position:static;background:none;color:#555;font-size:6pt;padding:0;line-height:1.2}
   .print-poster .credit a{color:inherit}

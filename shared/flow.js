@@ -1,19 +1,19 @@
 // The student path: one task per screen, in this order. "seen" steps are reading screens
 // remembered on this device; "team" steps are done when the shared team state says so.
-import { eventPlan, textFields, treeIssues, writableFields, choicesValid } from './game.js';
+import { eventPlan, textFields, treeIssues, writableFields, choicesValid, reflectionFields } from './game.js';
 
 export const chapters = ['start','place','tech','civic','event','talk','present','reveal'];
 export const steps = [
-  ['intro1','start','seen'], ['intro2','start','seen'], ['intro3','start','seen'],
+  ['intro1','start','seen'], ['intro2','start','seen'],
   ['choosePlace','place','team'], ['where','place','seen'], ['land','place','seen'], ['climate','place','seen'],
-  ['resources','place','seen'], ['challenge','place','seen'], ['prices','place','seen'],
+  ['resources','place','seen'], ['developmentPreview','place','seen'], ['challenge','place','seen'], ['prices','place','seen'], ['intro3','place','seen'],
   ['techIntro','tech','seen'], ['techTree','tech','team'], ['techReview','tech','seen'],
   ['civicIntro','civic','seen'], ['civicTree','civic','team'], ['civicReview','civic','seen'],
   ['eventRoll','event','team'], ['eventCard','event','seen'], ['eventResolve','event','team'], ['eventResult','event','seen'], ['eventAnswer','event','team'],
-  ['civName','talk','seen'], ['geographyAnswer','talk','team'], ['government','talk','team'], ['economy','talk','team'], ['beliefs','talk','team'],
+  ['civName','talk','team'], ['geographyAnswer','talk','team'], ['government','talk','team'], ['economy','talk','team'], ['beliefs','talk','team'],
   ['shapeAnswer','talk','team'], ['notChosenAnswer','talk','team'], ['check','talk','seen'], ['submit','talk','team'],
   ['poster','present','seen'], ['wait','present','team'],
-  ['revealPlace','reveal','seen'], ['revealCompare','reveal','seen'], ['takeaway','reveal','seen']
+  ['revealPlace','reveal','seen'], ['revealCompare','reveal','seen'], ['historyDifferenceAnswer','reveal','team'], ['historyWorkAnswer','reveal','team'], ['historyOmissionAnswer','reveal','team'], ['reflectionReview','reveal','seen'], ['reflectionSubmit','reveal','team'], ['takeaway','reveal','seen']
 ].map(([id, chapter, kind]) => ({ id, chapter, kind }));
 export const stepById = Object.fromEntries(steps.map(step => [step.id, step]));
 // The writing step for each answer field (government, economy and beliefs carry chips too).
@@ -34,13 +34,15 @@ export function teamMilestones(team) {
     event:!!state.event,
     eventResolved:!!state.event && eventPlan(state).resolved,
     eventAnswer:filled(state, 'eventAnswer'),
+    civName:filled(state, 'civName'),
     geographyAnswer:filled(state, 'geographyAnswer'),
     government:choicesValid(state,'government') && filled(state, 'governmentAnswer'),
     economy:choicesValid(state,'economy') && filled(state, 'economyAnswer'),
     beliefs:choicesValid(state,'beliefs') && filled(state, 'beliefAnswer'),
     shapeAnswer:filled(state, 'shapeAnswer'),
     notChosenAnswer:filled(state, 'notChosenAnswer'),
-    submitted:!!team.submittedAt
+    submitted:!!team.submittedAt,
+    reflection:!!state.reflection?.submittedAt
   };
 }
 // Steps that do not apply to this team are skipped entirely.
@@ -50,7 +52,9 @@ export function stepApplies(id, team) {
   if (['eventCard','eventResult','eventResolve'].includes(id) && !state.event) return false;
   if (id === 'eventResolve') {
     const plan = eventPlan(state);
-    return state.event.roll !== 1 && !plan.protectedBy;
+    // Keep the decision screen in the path after its last gain/loss, so Next
+    // still reaches the result rather than jumping to the beginning.
+    return plan.kind !== 'none' || !!state.event.choice;
   }
   return true;
 }
@@ -73,13 +77,15 @@ export function stepDone(id, team, seen = new Set(), reveal = false) {
     case 'eventRoll': return !!state.event;
     case 'eventResolve': return !!state.event && eventPlan(state).resolved;
     case 'eventResult': return seen.has(id) || filled(state, 'eventAnswer');
-    case 'civName': return seen.has(id) || filled(state, 'civName');
+    case 'civName': return filled(state, 'civName');
     case 'government': return choicesValid(state,'government') && filled(state, 'governmentAnswer');
     case 'economy': return choicesValid(state,'economy') && filled(state, 'economyAnswer');
     case 'beliefs': return choicesValid(state,'beliefs') && filled(state, 'beliefAnswer');
     case 'submit': return !!team.submittedAt;
     case 'wait': return !!reveal;
+    case 'reflectionSubmit': return !!state.reflection?.submittedAt;
   }
+  if (reflectionFields.includes(id)) return !!state.reflection?.[id]?.trim();
   if (textFields.includes(id)) return filled(state, id);
   return seen.has(id);
 }

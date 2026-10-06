@@ -16,6 +16,7 @@ const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8'
 const plain = value => JSON.parse(JSON.stringify(value));
 const storage = () => { const values = new Map(); return { getItem:key => values.get(key) ?? null, setItem:(key,value) => values.set(key,String(value)) }; };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no; }); return { promise,resolve,reject }; };
+const scriptedDice = (...faces) => () => faces.shift();
 const makeTeam = (state = game.normalizeState({ ...game.initialState(), mapPoint:'G', fixedPoint:'G' }), id = 1) => ({ id, name:`Team ${id}`, createdAt:`2026-10-01:${id}`, submittedAt:null, version:1, state });
 const picked = (...ids) => ids.reduce((state,id) => game.applyAction(state, { type:'pick', tree:id === 'laws' ? 'civic' : 'tech', id }), makeTeam().state);
 
@@ -39,7 +40,7 @@ function client(api = async () => { throw new Error('unexpected request'); }, in
     globalThis.client={adopt,act,go,goNext,saveField,fieldInput,flushAll,withDie,doAct,openStream,
       streamEvent(name,data){stream.listeners.get(name)({data:JSON.stringify(data)})},
       setStep(step){ui.step=step},
-      snapshot(){return {team,pending,drafts:[...answerDrafts],saving:[...savingFields.keys()],ui,seen:[...seen],sync}},
+      snapshot(){return {team,pending,drafts:[...answerDrafts],saving:[...savingFields.keys()],ui,seen:[...seen],sync,reveal}},
       idle(){return actionQueue}
     };`, context, { filename:'public/app.js' });
   const app = context.client;
@@ -149,7 +150,7 @@ test('409 dice responses adopt a teammate’s existing card or event roll as suc
   for (const event of [false,true]) {
     const original = makeTeam(picked('husbandry','archery','laws'));
     const payload = event ? { type:'eventRoll', confirm:{ tech:[...original.state.tech], civic:['laws'] } } : { type:'pick', tree:'tech', id:'horseback' };
-    const rolled = { ...original, version:2, state:game.applyAction(original.state,payload,{ rollDie:() => event ? 6 : 2 }) };
+    const rolled = { ...original, version:2, state:game.applyAction(original.state,payload,{ rollDie:event ? scriptedDice(6,1) : scriptedDice(2) }) };
     const h = client(async () => { throw Object.assign(new Error('already rolled'),{ status:409, team:rolled }); },original);
     assert.equal(await h.app.withDie({ kind:event ? 'event' : 'card' },payload,event ? 'event' : 'card:horseback'),true);
     assert.deepEqual(h.snapshot().team,rolled);
@@ -193,7 +194,7 @@ test('a dice animation from an old login cannot clear a new team’s active roll
   h.timers.delete(oldAnimation[0]); oldAnimation[1].callback();
   assert.equal(await oldRoll,false);
   assert.deepEqual(h.snapshot().ui.rolling,{ kind:'event' });
-  newResponse.resolve({ team:{ ...other, version:2, state:game.applyAction(other.state,event,{ rollDie:() => 6 }) }, roster:[] });
+  newResponse.resolve({ team:{ ...other, version:2, state:game.applyAction(other.state,event,{ rollDie:scriptedDice(6,1) }) }, roster:[] });
   await h.app.idle();
   const newAnimation = [...h.timers.entries()].find(([,timer]) => timer.delay <= 750);
   assert(newAnimation); newAnimation[1].callback();
@@ -207,4 +208,90 @@ test('unsupported institutions are rejected locally without an optimistic change
   assert.equal(requests,0);
   assert.equal(h.snapshot().team.state.government,'');
   assert.deepEqual(h.snapshot().pending,[]);
+});
+
+test('closing the historical reveal returns to the gate and retains unsaved reflection text', async () => {
+  const original={...makeTeam(picked('pottery','laws')),submittedAt:'2026-10-02T09:00:00Z'};
+  const h=client(async(path,body)=>{
+    assert.equal(path,'/api/team/action');
+    assert.equal(body.type,'reflectionAnswer');
+    throw Object.assign(new Error('reveal closed'),{code:'reflectionClosed',status:400});
+  },original);
+  h.app.openStream();h.app.streamEvent('reveal',{reveal:true});
+  h.app.setStep('historyWorkAnswer');
+  typeAnswer(h,'historyWorkAnswer','Maintenance required many people over several generations.');
+  h.app.streamEvent('reveal',{reveal:false});
+  assert.equal(h.snapshot().ui.step,'wait');
+  assert.equal(h.snapshot().reveal,false);
+  assert.deepEqual(h.snapshot().drafts,[['historyWorkAnswer','Maintenance required many people over several generations.']]);
+  await assert.rejects(h.app.saveField('historyWorkAnswer','Maintenance required many people over several generations.'),error=>error.cause.code==='reflectionClosed');
+  assert.deepEqual(h.snapshot().team.state.reflection,original.state.reflection);
+  assert.equal(h.snapshot().drafts[0][1],'Maintenance required many people over several generations.');
+  assert.equal(h.notices.at(-1).message,dictionary.en.reflectionSaveFailed);
+});
+
+test('reflection submission flushes its latest drafts before using the current version', async () => {
+  let state=picked('pottery','laws');
+  for(const key of game.reflectionFields)state=game.applyAction(state,{type:'reflectionAnswer',key,value:'Historical comparison.'});
+  let server={...makeTeam(state),submittedAt:'2026-10-02T09:00:00Z'};
+  const requests=[];
+  const h=client(async(path,body)=>{
+    requests.push({path,body:plain(body)});
+    if(path==='/api/team/action') {
+      assert.equal(body.type,'reflectionAnswer');
+      server={...server,version:server.version+1,state:game.applyAction(server.state,body)};
+    } else {
+      assert.equal(path,'/api/team/reflection/submit');
+      assert.equal(body.expectedVersion,server.version);
+      assert.equal(server.state.reflection.historyDifferenceAnswer,'Our updated evidence.');
+      server={...server,version:server.version+1,state:{...server.state,reflection:{...server.state.reflection,submittedAt:'2026-10-02T09:30:00Z'}}};
+    }
+    return {team:server,roster:[]};
+  },server);
+  h.app.openStream();h.app.streamEvent('reveal',{reveal:true});
+  typeAnswer(h,'historyDifferenceAnswer','Our updated evidence.');
+  await h.app.doAct('submitReflection');
+  assert.deepEqual(requests.map(request=>request.path),['/api/team/action','/api/team/reflection/submit']);
+  assert.deepEqual(h.snapshot().drafts,[]);
+  assert.equal(h.snapshot().team.state.reflection.submittedAt,'2026-10-02T09:30:00Z');
+  assert.equal(h.snapshot().team.submittedAt,'2026-10-02T09:00:00Z');
+});
+
+test('a teammate’s reflection submission retains a blocked draft without trapping navigation', async () => {
+  const state=picked('pottery','laws');
+  for(const key of game.reflectionFields)state.reflection[key]='Existing shared answer.';
+  const original={...makeTeam(state),submittedAt:'2026-10-02T09:00:00Z'};
+  const requests=[];
+  const h=client(async(path,body)=>{
+    requests.push({path,body});
+    throw Object.assign(new Error('reflection already submitted'),{code:'reflectionSubmitted',status:409});
+  },original);
+  h.app.openStream();h.app.streamEvent('reveal',{reveal:true});h.app.setStep('historyWorkAnswer');
+  typeAnswer(h,'historyWorkAnswer','My unsaved revision about maintenance.');
+  h.app.streamEvent('team',{team:{...original,version:2,state:{...state,reflection:{...state.reflection,submittedAt:'2026-10-02T09:30:00Z'}}},roster:[],by:'Bob'});
+  await h.app.go('reflectionReview');
+  assert.equal(h.snapshot().ui.step,'reflectionReview','final submission must not trap a teammate in a disabled answer screen');
+  assert.deepEqual(requests,[],'navigation must not send a reflection write after its final submission');
+  assert.deepEqual(h.snapshot().drafts,[['historyWorkAnswer','My unsaved revision about maintenance.']]);
+  assert.equal(h.snapshot().team.state.reflection.historyWorkAnswer,'Existing shared answer.','the retained draft must not change submitted team work');
+});
+
+test('reopening the civilization redirects historical work and preserves its draft during valid navigation', async () => {
+  const state=picked('pottery','laws');
+  for(const key of game.reflectionFields)state.reflection[key]='Existing shared answer.';
+  const original={...makeTeam(state),submittedAt:'2026-10-02T09:00:00Z'};
+  const requests=[];
+  const h=client(async(path,body)=>{
+    requests.push({path,body});
+    throw Object.assign(new Error('civilization needs submission'),{code:'reflectionNeedsSubmission',status:400});
+  },original);
+  h.app.openStream();h.app.streamEvent('reveal',{reveal:true});h.app.setStep('historyWorkAnswer');
+  typeAnswer(h,'historyWorkAnswer','My unsaved historical explanation.');
+  h.app.streamEvent('team',{team:{...original,version:2,submittedAt:null},roster:[],by:'Teacher'});
+  assert.notEqual(flow.chapterOf(h.snapshot().ui.step),'reveal','historical work must return to a valid civilization step after reopening');
+  await h.app.go('civName');
+  assert.equal(h.snapshot().ui.step,'civName');
+  assert.deepEqual(requests,[],'navigation must not send historical answers before the civilization is submitted again');
+  assert.deepEqual(h.snapshot().drafts,[['historyWorkAnswer','My unsaved historical explanation.']]);
+  assert.equal(h.snapshot().team.state.reflection.historyWorkAnswer,'Existing shared answer.');
 });

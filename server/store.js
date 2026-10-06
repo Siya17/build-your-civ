@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync, constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { applyAction, codeTag, initialState, isCodeShape, isPoint, normalizeCode, normalizeState, points, submissionGaps } from '../shared/game.js';
+import { applyAction, codeTag, initialState, isCodeShape, isPoint, normalizeCode, normalizeState, points, submissionGaps, reflectionGaps } from '../shared/game.js';
 
 const dataDir = resolve(process.env.DATA_DIR || join(process.cwd(), 'data'));
 mkdirSync(dataDir, { recursive: true });
@@ -38,6 +38,15 @@ const rulesChanged = raw => {
   const clean = normalizeState(raw);
   return ['tech','civic'].some(tree => JSON.stringify(raw[tree] || []) !== JSON.stringify(clean[tree]));
 };
+const lessonChanged = raw => !oldState(raw) && (Object.hasOwn(raw.event ?? {},'roll') || ['nature','mystics','organized'].includes(raw.beliefs));
+function preserveBeforeWrite(id) {
+  const row = statements.teamById.get(id);
+  if (!row) return;
+  const raw = savedState(row);
+  if (oldState(raw)) backupBeforeUpgrade();
+  else if (rulesChanged(raw)) backupBeforeUpgrade('pre-rules');
+  else if (lessonChanged(raw)) backupBeforeUpgrade('pre-lesson');
+}
 if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => oldState(savedState(row)))) {
   backupBeforeUpgrade();
 } else if (existingTables.has('teams') && db.prepare('SELECT state_json FROM teams').all().some(row => rulesChanged(savedState(row)))) {
@@ -194,17 +203,15 @@ export function pruneSessions() { return statements.expireSessions.run(Date.now(
 // Introducing an await inside would let another request interleave mid-transaction.
 // The server rolls every die (rollDie), inside the transaction, so a roll is final.
 export function updateTeam(id, action, actor, rollDie = () => randomInt(1, 7)) {
-  const existing = statements.teamById.get(id);
-  if (existing) {
-    const raw = savedState(existing);
-    if (oldState(raw)) backupBeforeUpgrade();
-    else if (rulesChanged(raw)) backupBeforeUpgrade('pre-rules');
-  }
+  preserveBeforeWrite(id);
   db.exec('BEGIN IMMEDIATE');
   try {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
-    if (row.submitted_at) throw Object.assign(new Error('This team has already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
+    if (action.type === 'reflectionAnswer') {
+      if (!row.submitted_at) throw Object.assign(new Error('Submit your civilization before writing the historical reflection.'), {code:'reflectionNeedsSubmission'});
+      if (!revealOpen()) throw Object.assign(new Error('Your teacher has closed the historical comparison. Your draft is still here.'), {code:'reflectionClosed'});
+    } else if (row.submitted_at) throw Object.assign(new Error('This team has already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
     if(Object.hasOwn(action,'expectedVersion')&&action.expectedVersion!==row.version){const error=new Error('The team changed. Review the updated choice before confirming.');error.status=409;throw error;}
     const next = applyAction(normalizeState(savedState(row)), action, {rollDie});
     statements.setState.run(JSON.stringify(next),id);
@@ -228,9 +235,54 @@ export function submitTeam(id, actor) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 export function reopenTeam(id) {
-  if (!statements.clearSubmitted.run(id).changes) throw new Error('Team not found');
-  statements.insertLog.run(id,'Teacher','reopen');
-  return getTeam(id);
+  preserveBeforeWrite(id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = statements.teamById.get(id);
+    if (!row) throw new Error('Team not found');
+    const state = normalizeState(savedState(row));
+    state.reflection.submittedAt = null;
+    statements.setState.run(JSON.stringify(state), id);
+    statements.clearSubmitted.run(id);
+    statements.insertLog.run(id,'Teacher','reopen');
+    db.exec('COMMIT');
+    return getTeam(id);
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function submitReflection(id, actor, expectedVersion) {
+  preserveBeforeWrite(id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = statements.teamById.get(id);
+    if (!row) throw new Error('Team not found');
+    if (!row.submitted_at) throw Object.assign(new Error('Submit your civilization first.'), {code:'reflectionNeedsSubmission'});
+    if (!revealOpen()) throw Object.assign(new Error('The historical comparison is closed.'), {code:'reflectionClosed'});
+    const state = normalizeState(savedState(row));
+    if (state.reflection.submittedAt) throw Object.assign(new Error('The historical reflection has already been submitted.'), {code:'reflectionSubmitted',status:409});
+    if (expectedVersion !== row.version) throw Object.assign(new Error('Your team changed the reflection. Review it before submitting.'), {status:409});
+    const gaps = reflectionGaps(state);
+    if (gaps.length) throw Object.assign(new Error('Complete all three historical reflection answers.'), {gaps});
+    state.reflection.submittedAt = new Date().toISOString();
+    statements.setState.run(JSON.stringify(state), id);
+    statements.insertLog.run(id, actor, 'reflectionSubmit');
+    db.exec('COMMIT');
+    return getTeam(id);
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+export function reopenReflection(id) {
+  preserveBeforeWrite(id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = statements.teamById.get(id);
+    if (!row) throw new Error('Team not found');
+    const state = normalizeState(savedState(row));
+    state.reflection.submittedAt = null;
+    statements.setState.run(JSON.stringify(state), id);
+    statements.insertLog.run(id, 'Teacher', 'reflectionReopen');
+    db.exec('COMMIT');
+    return getTeam(id);
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 // The teacher opens "what really happened" for the whole class at once.

@@ -47,6 +47,27 @@ const signInTeacher=async()=>{
 const makeTeam=async(teacher,name)=>(await request('/api/teacher/teams',{name},teacher)).data.team;
 const joinTeam=async(code,name)=>await request('/api/auth/team',{name,code});
 const answers=['eventAnswer','geographyAnswer','governmentAnswer','economyAnswer','beliefAnswer','shapeAnswer','notChosenAnswer'];
+const reflectionAnswers=['historyDifferenceAnswer','historyWorkAnswer','historyOmissionAnswer'];
+async function submittedTeam(teacher,name) {
+  const made=await makeTeam(teacher,name);
+  const student=await joinTeam(made.code,'Historical Reader');
+  const act=async action=>{
+    const response=await request('/api/team/action',action,student.cookie);
+    assert.equal(response.status,200,JSON.stringify(response.data));
+    return response.data.team;
+  };
+  await act({type:'map',point:'G'});
+  await act({type:'pick',tree:'tech',id:'pottery'});
+  await act({type:'pick',tree:'civic',id:'laws'});
+  dice.push(1,1);
+  await act({type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']}});
+  for(const key of answers)await act({type:'field',key,value:'Original classroom argument.'});
+  await act({type:'field',key:'civName',value:name});
+  for(const [key,value]of [['government','council'],['economy','farming'],['beliefs','river']])await act({type:'chip',key,value,on:true});
+  const response=await request('/api/team/submit',{},student.cookie);
+  assert.equal(response.status,200,JSON.stringify(response.data));
+  return {team:response.data.team,cookie:student.cookie};
+}
 
 // Event-stream reader. Frames arrive coalesced or split depending on timing, so they are
 // parsed into a queue and matched by predicate rather than by position.
@@ -138,15 +159,20 @@ test('30 students can join, share choices and answers, roll the event and submit
   const early=await request('/api/team/submit',{},b);
   assert.equal(early.status,400);
   assert(early.data.gaps.includes('event')&&early.data.gaps.includes('shapeAnswer'));
-  dice.push(6);
+  dice.push(6,1);
   let team=await act({type:'eventRoll',confirm:{tech:seen.state.tech,civic:seen.state.civic}});
-  assert.equal(team.state.event.roll,6);
+  assert.equal(team.state.event.id,6);
+  assert.deepEqual(team.state.event.dice,[6,1]);
   team=await act({type:'eventGain',tree:'tech',id:'currency',index:0},b);
   assert(team.state.tech.includes('currency'));
   for(const key of answers)await act({type:'field',key,value:'Our team explanation'});
   await act({type:'chip',key:'government',value:'council'});
   await act({type:'chip',key:'economy',value:'farming',on:true});
-  await act({type:'chip',key:'beliefs',value:'nature'});
+  await act({type:'chip',key:'beliefs',value:'river'});
+  const missingName=await request('/api/team/submit',{},b);
+  assert.equal(missingName.status,400);
+  assert.deepEqual(missingName.data.gaps,['civName']);
+  await act({type:'field',key:'civName',value:'River Makers'});
   const submitted=await request('/api/team/submit',{},b);
   assert.equal(submitted.status,200);
   assert(submitted.data.team.submittedAt);
@@ -179,14 +205,18 @@ test('every die is rolled on the server, once, and a roll from the browser is ig
   assert.equal((await act({type:'pick',tree:'civic',id:'laws'})).status,200);
   // Two students press "Roll" at the same moment: one roll wins, the other sees it.
   const state=(await request('/api/me',undefined,a)).data.team.state;
-  dice.push(2);
+  dice.push(2,1);
+  const eventDiceBefore=diceUsed;
   const confirm={tech:state.tech,civic:state.civic};
   const [first,second]=await Promise.all([act({type:'eventRoll',confirm},a),act({type:'eventRoll',confirm},b)]);
   assert.deepEqual([first.status,second.status].sort(),[200,409]);
   const loser=first.status===409?first:second;
   assert.equal(loser.data.code,'alreadyRolled');
-  assert.equal(loser.data.team.state.event.roll,2,'the refusal carries the roll that happened');
-  assert.equal(dice.length,0,'exactly one die was used');
+  assert.equal(loser.data.team.state.event.id,2,'the refusal carries the roll that happened');
+  assert.deepEqual(loser.data.team.state.event.dice,[2,1]);
+  assert.deepEqual(first.data.team.state.event,second.data.team.state.event);
+  assert.equal(diceUsed-eventDiceBefore,2,'the winning event consumes exactly two server faces');
+  assert.equal(dice.length,0,'the other request consumes no extra dice');
   assert.equal((await act({type:'eventLose',tree:'tech',id:'horseback',index:1})).status,409,'a stale index');
   assert.equal((await act({type:'eventLose',tree:'tech',id:'husbandry',index:0})).status,400,'not at the end of a branch');
   assert.equal((await act({type:'eventLose',tree:'tech',id:'horseback',index:0})).status,200);
@@ -217,6 +247,104 @@ test('invalid server dice roll back the complete action and its activity entry',
   assert.equal((await act({type:'pick',tree:'tech',id:'horseback'})).data.team.state.rolls.horseback,4,'a valid retry succeeds after rollback');
 });
 
+test('an invalid second event face rolls back both dice, state, version and activity',limit,async()=>{
+  const teacher=await signInTeacher(),made=await makeTeam(teacher,'Event Pair Rollback');
+  const student=await joinTeam(made.code,'Nao');
+  const act=action=>request('/api/team/action',action,student.cookie);
+  await act({type:'map',point:'G'});
+  await act({type:'pick',tree:'tech',id:'pottery'});
+  await act({type:'pick',tree:'civic',id:'laws'});
+  const before=(await request('/api/me',undefined,student.cookie)).data.team;
+  const activity=(await request(`/api/teacher/teams/${made.id}/activity`,undefined,teacher)).data;
+  const action={type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']},id:12,dice:[6,6]};
+  for(const invalid of [0,7,2.5]) {
+    const used=diceUsed;dice.push(1,invalid);
+    const refused=await act(action);
+    assert.equal(refused.status,500);
+    assert.equal(diceUsed-used,2);
+    assert.deepEqual((await request('/api/me',undefined,student.cookie)).data.team,before);
+    assert.deepEqual((await request(`/api/teacher/teams/${made.id}/activity`,undefined,teacher)).data,activity);
+  }
+  dice.push(1,4);
+  const retry=await act(action);
+  assert.equal(retry.status,200);
+  assert.equal(retry.data.team.state.event.id,7,'the server pair decides the event');
+  assert.deepEqual(retry.data.team.state.event.dice,[1,4]);
+});
+
+test('historical reflection requires submission and an open teacher reveal',limit,async()=>{
+  const teacher=await signInTeacher();
+  await request('/api/teacher/reveal',{reveal:true},teacher);
+  const fresh=await makeTeam(teacher,'Not Yet Submitted');
+  const student=await joinTeam(fresh.code,'Early Reader');
+  const answer={type:'reflectionAnswer',key:reflectionAnswers[0],value:'Too early'};
+  assert.equal((await request('/api/team/action',answer,student.cookie)).data.code,'reflectionNeedsSubmission');
+  assert.equal((await request('/api/team/reflection/submit',{expectedVersion:fresh.version},student.cookie)).data.code,'reflectionNeedsSubmission');
+  const submitted=await submittedTeam(teacher,'Closed Reflection');
+  await request('/api/teacher/reveal',{reveal:false},teacher);
+  assert.equal((await request('/api/team/action',answer,submitted.cookie)).data.code,'reflectionClosed');
+  assert.equal((await request('/api/team/reflection/submit',{expectedVersion:submitted.team.version},submitted.cookie)).data.code,'reflectionClosed');
+  assert.deepEqual((await request('/api/me',undefined,submitted.cookie)).data.team,submitted.team);
+});
+
+test('typed historical reflections synchronize, submit separately and reopen independently',limit,async()=>{
+  const teacher=await signInTeacher();
+  await request('/api/teacher/reveal',{reveal:true},teacher);
+  const original=await submittedTeam(teacher,'Historical Team');
+  const teammate=await joinTeam(original.team.code,'Second Reader');
+  const live=await openStream(teammate.cookie);
+  await live.waitFor(frame=>frame.startsWith('event: team'));
+  const act=(action,cookie=original.cookie)=>request('/api/team/action',action,cookie);
+  const early=await request('/api/team/reflection/submit',{expectedVersion:original.team.version},original.cookie);
+  assert.equal(early.status,400);assert.deepEqual(early.data.gaps,reflectionAnswers);
+  let latest=original.team;
+  for(const [index,key]of reflectionAnswers.entries()) {
+    const value=`Historical evidence ${index}: water, labour and cooperation.`;
+    const response=await act({type:'reflectionAnswer',key,value},index===1?teammate.cookie:original.cookie);
+    assert.equal(response.status,200);latest=response.data.team;
+    const frame=await live.waitFor(frame=>frame.startsWith('event: team')&&frame.includes(value),'a shared historical answer');
+    assert.equal(dataOf(frame).team.state.reflection[key],value);
+  }
+  assert.equal(latest.submittedAt,original.team.submittedAt);
+  assert.deepEqual({...latest.state,reflection:original.team.state.reflection},original.team.state,'historical answers preserve the original civilization');
+  live.controller.abort();
+  const reconnect=await joinTeam(original.team.code,'Reconnected Reader');
+  assert.deepEqual(reconnect.data.team.state.reflection,latest.state.reflection);
+  assert.equal((await act({type:'field',key:'geographyAnswer',value:'Changed after submission'})).data.code,'submitted');
+  const stale=await request('/api/team/reflection/submit',{expectedVersion:original.team.version},original.cookie);
+  assert.equal(stale.status,409);assert.equal(stale.data.team.version,latest.version);
+  assert.equal(stale.data.team.state.reflection.submittedAt,null);
+  const submitted=await request('/api/team/reflection/submit',{expectedVersion:latest.version},teammate.cookie);
+  assert.equal(submitted.status,200);
+  assert(submitted.data.team.state.reflection.submittedAt);
+  assert.equal(submitted.data.team.submittedAt,original.team.submittedAt);
+  const final=submitted.data.team;
+  assert.equal((await act({type:'reflectionAnswer',key:reflectionAnswers[0],value:'Changed'})).status,409);
+  assert.equal((await request('/api/team/reflection/submit',{expectedVersion:final.version},original.cookie)).status,409);
+  assert.equal((await request(`/api/teacher/teams/${final.id}/reopen-reflection`,{},teammate.cookie)).status,401);
+  const reopened=await request(`/api/teacher/teams/${final.id}/reopen-reflection`,{},teacher);
+  assert.equal(reopened.status,200);
+  assert.equal(reopened.data.team.state.reflection.submittedAt,null);
+  assert.equal(reopened.data.team.submittedAt,original.team.submittedAt);
+  for(const key of reflectionAnswers)assert.equal(reopened.data.team.state.reflection[key],final.state.reflection[key]);
+  const revision=await act({type:'reflectionAnswer',key:reflectionAnswers[0],value:'Revised historical comparison.'});
+  assert.equal(revision.status,200);
+  await request('/api/teacher/reveal',{reveal:false},teacher);
+  const gated=await act({type:'reflectionAnswer',key:reflectionAnswers[1],value:'Blocked while closed'});
+  assert.equal(gated.status,400);assert.equal(gated.data.code,'reflectionClosed');
+  assert.deepEqual((await request('/api/me',undefined,original.cookie)).data.team,revision.data.team,'closing reveal preserves saved drafts');
+  await request('/api/teacher/reveal',{reveal:true},teacher);
+  const resubmitted=await request('/api/team/reflection/submit',{expectedVersion:revision.data.team.version},original.cookie);
+  assert.equal(resubmitted.status,200);
+  const allReopened=await request(`/api/teacher/teams/${final.id}/reopen`,{},teacher);
+  assert.equal(allReopened.status,200);
+  assert.equal(allReopened.data.team.submittedAt,null);
+  assert.equal(allReopened.data.team.state.reflection.submittedAt,null);
+  for(const key of reflectionAnswers)assert.equal(allReopened.data.team.state.reflection[key],resubmitted.data.team.state.reflection[key]);
+  assert.equal((await act({type:'field',key:'geographyAnswer',value:'Now editable again'})).status,200);
+  await request('/api/teacher/reveal',{reveal:false},teacher);
+});
+
 test('HTTP picks and free event gains cannot bypass a missing Philosophy branch',limit,async()=>{
   const teacher=await signInTeacher(),made=await makeTeam(teacher,'Required Branches');
   const student=await joinTeam(made.code,'Akio');
@@ -228,7 +356,7 @@ test('HTTP picks and free event gains cannot bypass a missing Philosophy branch'
   const bypass=await act({type:'pick',tree:'civic',id:'philosophy'});
   assert.equal(bypass.status,400);assert.equal(bypass.data.code,'needsParent');
   assert.equal((await request('/api/me',undefined,student.cookie)).data.team.version,before.version,'a refusal writes nothing');
-  dice.push(6);
+  dice.push(6,1);
   assert.equal((await act({type:'eventRoll',confirm:{tech:before.state.tech,civic:before.state.civic}})).status,200);
   const gain=await act({type:'eventGain',tree:'civic',id:'philosophy',index:0});
   assert.equal(gain.status,400);assert.equal(gain.data.code,'cannotGain');
@@ -243,17 +371,20 @@ test('HTTP institution choices require their working developments',limit,async()
   const act=action=>request('/api/team/action',action,student.cookie);
   await act({type:'map',point:'G'});
   for(const id of ['laws','trade','empire','poetry'])assert.equal((await act({type:'pick',tree:'civic',id})).status,200);
-  for(const [key,value]of [['government','priests'],['beliefs','mystics'],['beliefs','organized']]) {
+  for(const [key,value]of [['government','priests']]) {
     const refused=await act({type:'chip',key,value});
     assert.equal(refused.status,400);assert.equal(refused.data.code,'needsCapabilities');
+  }
+  for(const value of ['mystics','organized']) {
+    const refused=await act({type:'chip',key:'beliefs',value});
+    assert.equal(refused.status,400);assert.equal(refused.data.code,'badChip');
   }
   assert.equal((await act({type:'chip',key:'beliefs',value:'ancestors'})).status,200,'ordinary spirituality is not gated behind institutions');
   assert.equal((await act({type:'pick',tree:'civic',id:'mysticism'})).status,200);
   assert.equal((await act({type:'chip',key:'government',value:'priests'})).status,200);
-  assert.equal((await act({type:'chip',key:'beliefs',value:'mystics'})).status,200);
-  assert.equal((await act({type:'chip',key:'beliefs',value:'organized'})).data.code,'needsCapabilities');
+  assert.equal((await act({type:'chip',key:'beliefs',value:'other'})).status,200);
   assert.equal((await act({type:'pick',tree:'civic',id:'theology'})).status,200);
-  assert.equal((await act({type:'chip',key:'beliefs',value:'organized'})).status,200);
+  for(const value of ['ancestors','animals','river','sea','mountains','sky','gods','one','other']) assert.equal((await act({type:'chip',key:'beliefs',value})).status,200);
 });
 
 test('ordinary leadership, subsistence and belief can complete a team after Society is lost',limit,async()=>{
@@ -263,7 +394,7 @@ test('ordinary leadership, subsistence and belief can complete a team after Soci
   await act({type:'map',point:'G'});
   await act({type:'pick',tree:'tech',id:'pottery'});
   await act({type:'pick',tree:'civic',id:'laws'});
-  dice.push(4);
+  dice.push(4,1);
   assert.equal((await act({type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']}})).status,200);
   const empty=await act({type:'eventLose',id:'laws',index:0});
   assert.equal(empty.status,200);assert.deepEqual(empty.data.team.state.civic,[]);
@@ -272,6 +403,7 @@ test('ordinary leadership, subsistence and belief can complete a team after Soci
   for(const value of ['farming','fishing','hunting'])assert.equal((await act({type:'chip',key:'economy',value,on:true})).status,200);
   assert.equal((await act({type:'chip',key:'beliefs',value:'one'})).status,200);
   for(const key of answers)assert.equal((await act({type:'field',key,value:'Our revised explanation.'})).status,200);
+  assert.equal((await act({type:'field',key:'civName',value:'Life After Loss'})).status,200);
   assert.equal((await request('/api/team/submit',{},student.cookie)).status,200,'an emptied Society tree does not force impossible institutions');
 });
 

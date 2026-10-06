@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, normalizeState, applyAction } from '../shared/game.js';
-import { steps, nextStep, stepAvailable, stepApplies, stepDone, teamStep, teamMilestones } from '../shared/flow.js';
+import { initialState, normalizeState, applyAction, reflectionFields } from '../shared/game.js';
+import { steps, nextStep, stepAvailable, stepApplies, stepDone, teamStep, teamMilestones, neighbourStep } from '../shared/flow.js';
 import { dictionary } from '../shared/i18n.js';
 import { studentPage } from '../public/screens.js';
 import { posterMarkup } from '../public/poster.js';
@@ -20,13 +20,14 @@ function fullRun() {
   for (const id of ['pottery','irrigation','writing','husbandry','archery']) act({ type:'pick', tree:'tech', id });
   act({ type:'pick', tree:'tech', id:'horseback' }, dice(5));
   for (const id of ['laws','trade','empire']) act({ type:'pick', tree:'civic', id });
-  act({ type:'eventRoll', confirm:{ tech:[...state.tech], civic:[...state.civic] } }, dice(4));
+  act({ type:'eventRoll', confirm:{ tech:[...state.tech], civic:[...state.civic] } }, dice(4,1));
   act({ type:'eventLose', tree:'civic', id:'empire', index:0 });
   act({ type:'eventLose', tree:'civic', id:'trade', index:1 });
   for (const key of ['eventAnswer','geographyAnswer','governmentAnswer','economyAnswer','beliefAnswer','shapeAnswer','notChosenAnswer']) act({ type:'field', key, value:'Our answer.' });
   act({ type:'chip', key:'government', value:'council' });
   act({ type:'chip', key:'economy', value:'farming', on:true });
-  act({ type:'chip', key:'beliefs', value:'nature' });
+  act({ type:'chip', key:'beliefs', value:'river' });
+  act({ type:'field', key:'civName', value:'River Keepers' });
   return state;
 }
 
@@ -52,7 +53,7 @@ test('the steps open one after another during a full run, and the reveal waits f
   let safe = start('G');
   for (const id of ['pottery','irrigation','mining','masonry']) safe = applyAction(safe, { type:'pick', tree:'tech', id });
   safe = applyAction(safe, { type:'pick', tree:'civic', id:'laws' });
-  safe = applyAction(safe, { type:'eventRoll', confirm:{ tech:[...safe.tech], civic:['laws'] } }, { rollDie:dice(1) });
+  safe = applyAction(safe, { type:'eventRoll', confirm:{ tech:[...safe.tech], civic:['laws'] } }, { rollDie:dice(1,1) });
   assert(!stepApplies('eventResolve', team(safe)));
   assert.equal(teamStep(team(safe), false).id, 'eventAnswer');
 });
@@ -63,7 +64,7 @@ test('every screen has one task: exactly one primary button, in both languages',
   for (const lang of ['en','ja']) {
     for (const step of steps) {
       if (step.id === 'choosePlace') continue;
-      const t = step.chapter === 'reveal' || step.id === 'wait' || step.id === 'poster' ? { ...team(states.done), submittedAt:'2026-10-01' } : ['intro1','intro2','intro3','where','land','climate','resources','challenge','prices','techIntro','techTree','techReview','civicIntro','civicTree','civicReview'].includes(step.id) ? team(states.early) : team(states.building);
+      const t = step.chapter === 'reveal' || step.id === 'wait' || step.id === 'poster' ? { ...team(states.done), submittedAt:'2026-10-01' } : ['intro1','intro2','intro3','where','land','climate','resources','developmentPreview','challenge','prices','techIntro','techTree','techReview','civicIntro','civicTree','civicReview'].includes(step.id) ? team(states.early) : team(states.building);
       const html = page(t, step.id, { lang, reveal:step.chapter === 'reveal' || step.id === 'wait' });
       if (step.id === 'eventRoll' && !t.state.event) continue;
       assert.equal(primaries(html), 1, `${lang} ${step.id} should have one primary button`);
@@ -84,7 +85,7 @@ test('the card screen, the roll screen and the event decision each keep one prim
   let state = start('G');
   for (const id of ['pottery','writing']) state = applyAction(state, { type:'pick', tree:'tech', id });
   state = applyAction(state, { type:'pick', tree:'civic', id:'laws' });
-  state = applyAction(state, { type:'eventRoll', confirm:{ tech:[...state.tech], civic:['laws'] } }, { rollDie:dice(3) });
+  state = applyAction(state, { type:'eventRoll', confirm:{ tech:[...state.tech], civic:['laws'] } }, { rollDie:dice(3,1) });
   const choose = page(team(state), 'eventResolve');
   assert.equal(primaries(choose), 1);
   assert.match(choose, /data-select="choice:trade"/);
@@ -97,6 +98,26 @@ test('the card screen, the roll screen and the event decision each keep one prim
   state = applyAction(state, { type:'eventChoice', choice:'fight' });
   const lose = page(team(state), 'eventResolve', { ui:{ selected:'tech:writing' } });
   assert.match(lose, /data-act="lose:tech:writing"/);
+});
+
+test('resolved event choices and gains keep their result transition available', () => {
+  const ready=normalizeState({...start('G'),tech:['pottery','husbandry','archery'],civic:['laws']});
+  for(const choice of ['trade','fight']) {
+    let state=applyAction(ready,{type:'eventRoll',confirm:{tech:ready.tech,civic:ready.civic}},{rollDie:dice(3,1)});
+    state=applyAction(state,{type:'eventChoice',choice});
+    if(choice==='trade')state=applyAction(state,{type:'eventGain',tree:'civic',id:'trade',index:0});
+    const completed=team(state);
+    assert(stepDone('eventResolve',completed));
+    assert(stepApplies('eventResolve',completed),`${choice}: retain the completed decision screen`);
+    assert.equal(neighbourStep('eventResolve',completed,1),'eventResult');
+    const html=page(completed,'eventResolve');
+    assert.match(html,/data-nav="next"/);
+    assert.doesNotMatch(html,/<button[^>]*data-nav="next"[^>]*disabled/);
+  }
+  let opportunity=applyAction(ready,{type:'eventRoll',confirm:{tech:ready.tech,civic:ready.civic}},{rollDie:dice(6,1)});
+  opportunity=applyAction(opportunity,{type:'eventGain',tree:'tech',id:'writing',index:0});
+  assert(stepApplies('eventResolve',team(opportunity)));
+  assert.equal(neighbourStep('eventResolve',team(opportunity),1),'eventResult','the completed gain continues to its result');
 });
 
 test('the poster shows the team’s place, cards, event and answers', () => {
@@ -112,7 +133,7 @@ test('a teammate’s event finishes the tree reviews and retains milestones if S
   state = applyAction(state, { type:'pick', tree:'civic', id:'laws' });
   assert.equal(stepDone('techReview', team(state)), false);
   assert.equal(stepDone('civicReview', team(state)), false);
-  state = applyAction(state, { type:'eventRoll', confirm:{ tech:['pottery'], civic:['laws'] } }, { rollDie:dice(4) });
+  state = applyAction(state, { type:'eventRoll', confirm:{ tech:['pottery'], civic:['laws'] } }, { rollDie:dice(4,1) });
   for (const id of ['techTree','techReview','civicTree','civicReview']) assert.equal(stepDone(id, team(state)), true, id);
   state = applyAction(state, { type:'eventLose', tree:'civic', id:'laws', index:0 });
   const milestones = teamMilestones(team(state));
@@ -134,12 +155,48 @@ test('government, economy and beliefs each need a choice and an explanation', ()
 });
 
 test('teacher reveal gates all reveal screens even after the device has seen them', () => {
-  const done = { ...team(fullRun()), submittedAt:'2026-10-01 10:00' };
-  for (const id of ['revealPlace','revealCompare','takeaway']) {
+  const complete = fullRun();
+  complete.reflection = {...Object.fromEntries(reflectionFields.map(key=>[key,'Our historical comparison.'])),submittedAt:'2026-10-01T10:30:00Z'};
+  const done = { ...team(complete), submittedAt:'2026-10-01 10:00' };
+  for (const id of ['revealPlace','revealCompare',...reflectionFields,'reflectionReview','reflectionSubmit','takeaway']) {
     assert.equal(stepAvailable(id, done, seenAll, false), false, id);
     assert.equal(stepAvailable(id, done, seenAll, true), true, id);
   }
   assert.equal(nextStep(done, seenAll, false).id, 'wait');
+});
+
+test('students review all developments before predicting suitability and reading game rules', () => {
+  const ids=steps.map(step=>step.id);
+  assert(ids.indexOf('resources')<ids.indexOf('developmentPreview'));
+  assert(ids.indexOf('developmentPreview')<ids.indexOf('challenge'));
+  assert(ids.indexOf('challenge')<ids.indexOf('prices'));
+  assert(ids.indexOf('prices')<ids.indexOf('intro3'));
+  assert(ids.indexOf('intro3')<ids.indexOf('techIntro'));
+  const fresh=team(start('G'));
+  assert.equal(stepDone('civName',fresh,new Set(['civName'])),false,'reading does not substitute for a name');
+  assert.equal(stepDone('civName',team({...fresh.state,civName:'   '}),seenAll),false);
+  assert.equal(teamMilestones(team({...fresh.state,civName:'River Keepers'})).civName,true);
+});
+
+test('three historical answers and their separate submission must precede the takeaway', () => {
+  let state=fullRun();
+  const submitted=()=>({...team(state),submittedAt:'2026-10-01T10:00:00Z'});
+  assert.equal(nextStep(submitted(),seenAll,true).id,reflectionFields[0]);
+  assert(!stepAvailable('takeaway',submitted(),seenAll,true));
+  for (const [index,key] of reflectionFields.entries()) {
+    assert(stepAvailable(key,submitted(),seenAll,true));
+    state=applyAction(state,{type:'reflectionAnswer',key,value:'Our comparison.'});
+    assert.equal(stepDone(key,submitted(),seenAll,true),true);
+    if(index<reflectionFields.length-1) assert.equal(nextStep(submitted(),seenAll,true).id,reflectionFields[index+1]);
+  }
+  assert.equal(nextStep(submitted(),seenAll,true).id,'reflectionSubmit');
+  assert(!stepDone('reflectionSubmit',submitted(),seenAll,true));
+  assert(!stepAvailable('takeaway',submitted(),seenAll,true));
+  state={...state,reflection:{...state.reflection,submittedAt:'2026-10-01T10:30:00Z'}};
+  assert(stepDone('reflectionSubmit',submitted(),seenAll,true));
+  assert(stepAvailable('takeaway',submitted(),seenAll,true));
+  assert.equal(teamMilestones(submitted()).reflection,true);
+  assert(!stepAvailable('takeaway',submitted(),seenAll,false),'closing reveal gates even completed reflection');
 });
 
 test('a student joining a submitted team still reads the welcome screens on this device', () => {

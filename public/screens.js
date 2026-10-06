@@ -2,13 +2,14 @@
 // The page (app.js) owns state and navigation; everything here only turns state into HTML.
 import { regions, worldMap } from '../shared/regions.js';
 import { trees, cardById, childrenOf } from '../shared/cards.js';
-import { priceOf, reasonOf, costOf, spent, statusOf, eventPlan, previewChoice, treeIssues, submissionGaps, fieldLimit, choiceOptions, cascadeOf, minimumCost, economyMax, BUDGET, points } from '../shared/game.js';
+import { priceOf, reasonOf, costOf, spent, statusOf, eventPlan, previewChoice, treeIssues, submissionGaps, fieldLimit, choiceOptions, cascadeOf, minimumCost, economyMax, BUDGET, points, eventId, reflectionFields, reflectionGaps, predictionMarks } from '../shared/game.js';
 import { chapters, steps, stepById, stepDone, stepAvailable, neighbourStep, stepApplies, stepField, chapterOf, teamStarted } from '../shared/flow.js';
 import { gapKeys } from '../shared/i18n.js';
-import { esc, fmt, loc, rich, plain, cardName, cardPlain, btn, priceBadge, statusBadge, priceSymbol, photo, heroPath, dieMarkup, climateCharts } from './ui.js';
+import { esc, fmt, loc, rich, plain, cardName, cardPlain, btn, priceBadge, statusBadge, priceSymbol, photo, heroPath, dieMarkup, climateCharts, eventDiceText } from './ui.js';
 import { treeMarkup, blocker } from './tree.js';
 import { posterMarkup } from './poster.js';
-import { starters, usefulWords } from './prompts.js';
+import { starters, usefulWords, eventPromptKind } from './prompts.js';
+import { regionalMap } from './regional-map.js';
 
 const icon = id => cardById[id]?.icon ?? '';
 const chip = (id, lang) => `<span class="card-chip"><span aria-hidden="true">${icon(id)}</span>${cardName(cardById[id], lang)}</span>`;
@@ -68,28 +69,52 @@ function worldMapMarkup(ctx, { pick = false, zoom = '' } = {}) {
 const priceList = (ctx, price) => {
   const { team, lang, L } = ctx, point = team.state.mapPoint;
   const ids = [...trees.tech, ...trees.civic].map(card => card.id).filter(id => priceOf(point, id) === price);
-  return `<section class="price-group p-${price}"><h2>${priceBadge(price, L)}</h2>${ids.length ? `<ul>${ids.map(id => `<li>${chip(id, lang)}<p>${rich(reasonOf(point, id)[lang], lang)}</p></li>`).join('')}</ul>` : `<p class="muted">${L.pricesNone}</p>`}</section>`;
+  return `<section class="price-group p-${price}"><h2>${priceBadge(price, L)}</h2>${ids.length ? `<ul>${ids.map(id => `<li>${chip(id, lang)}${markResult(ctx, id)}<p>${rich(reasonOf(point, id)[lang], lang)}</p></li>`).join('')}</ul>` : `<p class="muted">${L.pricesNone}</p>`}</section>`;
 };
 const pointsMeter = (state, tree, L) => {
   const used = spent(state, tree);
   return `<div class="points" role="img" aria-label="${esc(fmt(L.pointsUsed, used))}"><div class="pips">${Array.from({ length:BUDGET }, (_, i) => `<i class="${i < used ? 'used' : ''}"></i>`).join('')}${used > BUDGET ? `<i class="over"></i>`.repeat(used - BUDGET) : ''}</div><span>${fmt(L.pointsUsed, used)}</span></div>`;
 };
-const think = (title, questions, lang) => `<aside class="think"><h2>💭 ${rich(title, lang)}</h2>${questions.map(text => `<p>${rich(text, lang)}</p>`).join('')}</aside>`;
+// Short, optional team answers to the "Think with your team" prompts. They save like other answers.
+function notes(ctx, items) {
+  const { team, lang, L } = ctx, state = team.state, locked = !!team.submittedAt;
+  return `<aside class="think"><h2>💭 ${rich(L.thinkTitle, lang)}</h2>${items.map(([key, question]) => `<div class="answer short-note"><label for="field-${key}" class="answer-label">${rich(question, lang)}</label><small class="presence" data-presence="${key}"></small><textarea id="field-${key}" data-field="${key}" maxlength="${fieldLimit(key)}" rows="2" placeholder="${esc(plain(L.notePh))}" ${locked ? 'disabled' : ''}>${esc(state[key])}</textarea><small class="count" data-count-for="${key}">${fmt(L.charsLeft, fieldLimit(key) - state[key].length)}</small></div>`).join('')}</aside>`;
+}
+// What a regional price means as a prediction: ★ easy, unlisted normal, △ or ✗ difficult.
+const expectedMark = price => price === 'free' ? 'easy' : price === 'normal' ? 'normal' : 'hard';
+function markResult(ctx, id) {
+  const { team, L } = ctx, mark = team.state.predictions?.[id];
+  if (!mark) return '';
+  const ok = mark === expectedMark(priceOf(team.state.mapPoint, id));
+  return `<span class="mark-result m-${mark} ${ok ? 'ok' : 'differs'}">${esc(fmt(L.yourMark, L[`mark_${mark}`]))} · ${ok ? `✓ ${esc(L.markMatch)}` : `≠ ${esc(L.markDiffers)}`}</span>`;
+}
 const legend = L =>`<div class="legend" aria-label="${esc(L.legend)}">${['free','normal','hard','impossible'].map(price => priceBadge(price, L)).join('')}</div>`;
+function historicalReading(reveal, lang, L) {
+  const sources = reveal.sources ?? [];
+  const paragraphs = reveal.reading ?? reveal.facts[lang].map(text=>({text:{[lang]:text},sources:[]}));
+  return `<div class="prose historical-reading">${paragraphs.map(paragraph=>`<p>${rich(paragraph.text[lang],lang)}</p>${paragraph.sources?.length ? `<p class="paragraph-sources">${paragraph.sources.map(index=>sources[index]).filter(Boolean).map(source=>`<a href="${esc(source.url)}" target="_blank" rel="noopener">${rich(source.title[lang],lang,{terms:false})}</a>`).join(' · ')}</p>` : ''}`).join('')}</div><p class="small history-sources"><strong>${L.historySources}:</strong> ${sources.map(source=>`<a href="${esc(source.url)}" target="_blank" rel="noopener">${rich(source.title[lang],lang,{terms:false})}</a>`).join(' · ')}</p>`;
+}
+function historyWriting(ctx,key) {
+  const {L,lang,team}=ctx, reveal=regions[team.state.mapPoint].reveal;
+  return {title:rich(L[`writingTitle_${key}`],lang),body:writing(ctx,key,{extra:`<details class="history-evidence"><summary>${rich(L.historySources,lang)}</summary>${historicalReading(reveal,lang,L)}</details>`}),primary:next(L,!stepDone(key,team))};
+}
 
 // A writing task: the question, one answer box, then ideas to start with.
 function writing(ctx, key, { extra = '', chips = '', hideLabel = false } = {}) {
-  const { team, lang, L } = ctx, state = team.state, locked = !!team.submittedAt;
-  const ideas = starters(key, state, lang), words = usefulWords(key, lang), left = fieldLimit(key) - state[key].length;
+  const { team, lang, L } = ctx, state = team.state, reflection = reflectionFields.includes(key);
+  const locked = reflection ? !ctx.reveal || !team.submittedAt || !!state.reflection?.submittedAt : !!team.submittedAt;
+  const value = reflection ? state.reflection?.[key] ?? '' : state[key];
+  const question = key === 'eventAnswer' ? L[`eventAnswer_${eventPromptKind(state)}`] : L[key];
+  const ideas = starters(key, state, lang), words = usefulWords(key, lang), left = fieldLimit(key) - value.length;
   return `${chips}${extra}<div class="answer">
-      <label for="field-${key}" class="answer-label${hideLabel ? ' sr-only' : ''}">${rich(L[key], lang)}</label><small class="presence" data-presence="${key}"></small>
-      <textarea id="field-${key}" data-field="${key}" maxlength="${fieldLimit(key)}" rows="5" placeholder="${esc(plain(L.answerPh))}" ${locked ? 'disabled' : ''}>${esc(state[key])}</textarea>
+      <label for="field-${key}" class="answer-label${hideLabel ? ' sr-only' : ''}">${rich(question, lang)}</label><small class="presence" data-presence="${key}"></small>
+      <textarea id="field-${key}" data-field="${key}" maxlength="${fieldLimit(key)}" rows="7" placeholder="${esc(plain(reflection?L.historyAnswerPh:L.answerPh))}" ${locked ? 'disabled' : ''}>${esc(value)}</textarea>
       <small class="count" data-count-for="${key}">${fmt(L.charsLeft, left)}</small></div>
     ${ideas.length ? `<aside class="ideas"><h2>${L.startersTitle}</h2><ul>${ideas.map(text => `<li>${esc(text)}</li>`).join('')}</ul>${words.length ? `<h3>${L.wordsTitle}</h3><p class="words">${words.map(word => `<span>${rich(word, lang)}</span>`).join('')}</p>` : ''}</aside>` : ''}`;
 }
 function chipGroup(ctx, group) {
   const { team, lang, L } = ctx, state = team.state, multi = group === 'economy', locked = !!team.submittedAt;
-  return `<p class="context-strip">${rich(L.choiceScope, lang)}</p><div class="chips" role="group" aria-label="${esc(L[`${group === 'beliefs' ? 'beliefs' : group}Title`])}">${choiceOptions(state, group).map(option => {
+  return `<p class="context-strip">${rich(L[`choiceScope_${group}`] ?? L.choiceScope, lang)}</p><div class="chips" role="group" aria-label="${esc(L[`${group === 'beliefs' ? 'beliefs' : group}Title`])}">${choiceOptions(state, group).map(option => {
     const { value, available, requires } = option;
     const on = multi ? state.economy.includes(value) : state[group] === value;
     const full = multi && !on && state.economy.length >= economyMax;
@@ -118,15 +143,14 @@ const screens = {
       primary:next(L, !point) };
   },
   where(ctx) {
-    const { L, lang, team, anim } = ctx, point = team.state.mapPoint, region = regions[point];
-    const playing = anim?.key === `where:${point}`;
+    const { L, lang, team } = ctx, point = team.state.mapPoint, region = regions[point];
     return { title:`<span class="letter-badge">${point}</span> ${rich(region.name[lang], lang, { terms:false })}`, lead:rich(region.tagline[lang], lang), wide:true,
-      body:`<div class="where-stage ${playing ? 'playing' : 'still'}">${worldMapMarkup(ctx, { zoom:point })}${photo(`${point}/hero.webp`, plain(region.name[lang]), { cls:'where-photo', eager:true, lang })}</div><p class="area">📍 ${rich(region.area[lang], lang, { terms:false })}</p>`,
+      body:`<p class="area">📍 ${rich(region.area[lang], lang, { terms:false })}</p>${regionalMap(region, lang)}<div class="where-stage still">${worldMapMarkup(ctx)}${photo(`${point}/hero.webp`, plain(region.name[lang]), { cls:'where-photo', eager:true, lang })}</div>`,
       primary:next(L) };
   },
   land(ctx) {
     const { L, lang, team } = ctx, point = team.state.mapPoint, region = regions[point];
-    return { title:rich(L.landTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/land.webp`, plain(region.name[lang]), { eager:true })}<div class="prose">${lines(region.land[lang], lang)}<p class="hint">💬 ${rich(L.tapWords, lang)}</p></div></div>`, primary:next(L) };
+    return { title:rich(L.landTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/land.webp`, plain(region.name[lang]), { eager:true })}<div class="prose">${lines(region.context?.[lang] ?? region.land[lang], lang)}<p class="hint">💬 ${rich(L.tapWords, lang)}</p></div></div>`, primary:next(L) };
   },
   climate(ctx) {
     const { L, lang, team } = ctx, region = regions[team.state.mapPoint];
@@ -138,14 +162,28 @@ const screens = {
     return { title:rich(L.resourcesTitle, lang), lead:rich(L.resourcesLead, lang), wide:true,
       body:`<ul class="resource-grid">${region.resources.map(item => `<li>${photo(`${point}/${item.id}.webp`, plain(item[lang]))}<h2>${rich(item[lang], lang, { terms:false })}</h2><p>${rich(item.text[lang], lang)}</p></li>`).join('')}</ul>`, primary:next(L) };
   },
+  developmentPreview(ctx) {
+    const { L, lang, team, ui, compact } = ctx;
+    if (ui.sub?.kind === 'preview') {
+      const card = cardById[ui.sub.id];
+      return { sub:true, title:cardName(card,lang), lead:rich(card.summary[lang],lang), body:`<section class="prose"><p>${rich(card.what[lang],lang)}</p></section>`, back:'', primary:btn(L.backToTree,{sub:'close'}) };
+    }
+    const neutral = {...team.state,tech:[],civic:[]};
+    return {title:rich(L.previewTitle,lang),lead:rich(L.previewLead,lang),wide:true,
+      body:['tech','civic'].map(tree=>`<section class="preview-tree"><h2>${rich(L[tree==='tech'?'previewTechTitle':'previewCivicTitle'],lang)}</h2>${treeMarkup(neutral,tree,lang,L,{compact,preview:true})}</section>`).join(''), primary:next(L)};
+  },
   challenge(ctx) {
     const { L, lang, team } = ctx, point = team.state.mapPoint, region = regions[point];
-    return { title:rich(L.challengeTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/challenge.webp`, plain(region.challenge[lang][0]), { eager:true })}<ul class="challenge-list">${region.challenge[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul></div>${think(L.thinkTitle, [L.predictEasy, L.predictHard], lang)}`, primary:next(L) };
+    const { ui, compact } = ctx, tool = ui.markTool || 'easy', locked = !!team.submittedAt, neutral = { ...team.state, tech:[], civic:[] };
+    const tools = `<div class="mark-tools" role="group" aria-label="${esc(L.markTools)}">${predictionMarks.map(mark => `<button type="button" class="mark-tool m-${mark}" data-act="tool:${mark}" aria-pressed="${tool === mark}" ${locked ? 'disabled' : ''}>${esc(L[`mark_${mark}`])}</button>`).join('')}</div><p class="muted small">${rich(L.markHint, lang)}</p>`;
+    const markTrees = ['tech','civic'].map(tree => `<section class="preview-tree"><h3>${rich(L[tree === 'tech' ? 'previewTechTitle' : 'previewCivicTitle'], lang)}</h3>${treeMarkup(neutral, tree, lang, L, { compact, mark:true, marks:team.state.predictions, locked })}</section>`).join('');
+    return { title:rich(L.challengeTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/challenge.webp`, plain(region.challenge[lang][0]), { eager:true })}<ul class="challenge-list">${region.challenge[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul></div><section class="mark-panel"><h2>🏷️ ${rich(L.markTitle, lang)}</h2><p>${rich(L.markLead, lang)}</p>${tools}${markTrees}</section>${notes(ctx, [['predictEasyNote', L.predictEasy], ['predictHardNote', L.predictHard]])}`, primary:next(L) };
   },
   prices(ctx) {
-    const { L, lang } = ctx;
+    const { L, lang, team } = ctx, marked = Object.entries(team.state.predictions || {});
+    const matched = marked.filter(([id, mark]) => mark === expectedMark(priceOf(team.state.mapPoint, id))).length;
     return { title:rich(L.pricesTitle, lang), lead:rich(L.pricesLead, lang), wide:true,
-      body:`<div class="price-groups">${priceList(ctx,'free')}${priceList(ctx,'hard')}${priceList(ctx,'impossible')}</div>${think(L.thinkTitle, [L.thinkSurprise, L.thinkRisk], lang)}`, primary:next(L) };
+      body:`${marked.length ? `<p class="marks-result">${esc(fmt(L.marksResult, marked.length, matched))}</p>` : ''}<div class="price-groups">${priceList(ctx,'free')}${priceList(ctx,'hard')}${priceList(ctx,'impossible')}</div>${notes(ctx, [['surpriseNote', L.thinkSurprise], ['riskNote', L.thinkRisk]])}`, primary:next(L) };
   },
   techIntro: ctx => treeIntro(ctx, 'tech'),
   civicIntro: ctx => treeIntro(ctx, 'civic'),
@@ -156,8 +194,9 @@ const screens = {
   eventRoll(ctx) {
     const { L, lang, team, rolling, anim } = ctx, state = team.state;
     if (rolling?.kind === 'event' || state.event) {
-      const value = state.event?.roll, mode = !value ? 'spin' : anim?.key === 'event' ? 'land' : 'still';
-      return { title:rich(L.eventRollTitle, lang), body:`<div class="roll-stage">${dieMarkup(value || 1, mode)}<p class="roll-result" aria-live="polite">${value && mode !== 'land' ? `${fmt(L.eventRolled, value)} <strong>${rich(L[`event${value}`], lang)}</strong>` : L.rollWaiting}</p></div>`,
+      const value = eventId(state.event), mode = !value ? 'spin' : anim?.key === 'event' ? 'land' : 'still';
+      const dice = state.event?.dice ?? [1,1];
+      return { title:rich(L.eventRollTitle, lang), body:`<div class="roll-stage"><div class="event-dice">${dice.map(face=>dieMarkup(face,mode)).join('')}</div><p class="roll-result" aria-live="polite">${value && mode !== 'land' ? `${eventDiceText(state.event)} <strong>${rich(L[`event${value}`], lang)}</strong>` : L.rollWaiting}</p></div>`,
         primary:next(L, !value || mode === 'land', L.seeEvent) };
     }
     const issues = treeIssues(state), missing = !state.tech.length || !state.civic.length;
@@ -167,7 +206,7 @@ const screens = {
       primary:btn(`🎲 ${L.rollEvent}`, { act:'rollEvent' }, { disabled:!!problem || !!team.submittedAt }) };
   },
   eventCard(ctx) {
-    const { L, lang, team } = ctx, state = team.state, roll = state.event.roll, region = regions[state.mapPoint], plan = eventPlan(state);
+    const { L, lang, team } = ctx, state = team.state, roll = eventId(state.event), region = regions[state.mapPoint], plan = eventPlan(state);
     return { title:rich(L.eventCardTitle, lang), cls:'flip-in',
       body:`<article class="event-card e${roll}"><div class="event-num">${roll}</div><h2>${rich(L[`event${roll}`], lang)}</h2><p class="flavour">${rich(region.events[roll][lang], lang)}</p>
         <div class="rule"><h3>${L.ruleLabel}</h3><p>${rich(L[`eventRule${roll}`], lang)}</p></div>
@@ -197,27 +236,27 @@ const screens = {
       body:`${dieBlock}<div class="pick-options">${options}</div>${losing ? `<p class="muted">${rich(L.loseHint, lang)}</p>` : ''}`,
       primary:btn(esc(label), { act:`${losing ? 'lose' : 'gain'}:${valid ? `${tree}:${id}` : ''}` }, { disabled:!valid || !!team.submittedAt || !!rolling }) };
   },
-  eventResult(ctx) { const { L, lang, team } = ctx, event = team.state.event; return { title:rich(L.resultTitle, lang), body:`<div class="event-recap"><strong>🎲 ${event.roll} · ${rich(L[`event${event.roll}`], lang)}</strong><p>${rich(regions[team.state.mapPoint].events[event.roll][lang], lang)}</p></div>${changes(ctx)}`, primary:next(L) }; },
-  eventAnswer(ctx) { const { L, lang, team } = ctx; return { title:rich(L.eventAnswer, lang), body:writing(ctx, 'eventAnswer', { hideLabel:true }), primary:next(L, !stepDone('eventAnswer', team)) }; },
+  eventResult(ctx) { const { L, lang, team } = ctx, event = team.state.event; return { title:rich(L.resultTitle, lang), body:`<div class="event-recap"><strong>🎲 ${eventDiceText(event)} · ${rich(L[`event${eventId(event)}`], lang)}</strong><p>${rich(regions[team.state.mapPoint].events[eventId(event)][lang], lang)}</p></div>${changes(ctx)}`, primary:next(L) }; },
+  eventAnswer(ctx) { const { L, lang, team } = ctx; return { title:rich(L.writingTitle_eventAnswer, lang), body:writing(ctx, 'eventAnswer'), primary:next(L, !stepDone('eventAnswer', team)) }; },
   civName(ctx) {
     const { L, lang, team } = ctx;
     return { title:rich(L.civNameTitle, lang), lead:rich(L.civNameLead, lang),
       body:`<div class="answer short"><label for="field-civName" class="answer-label">${rich(L.civName, lang)}</label><small class="presence" data-presence="civName"></small><input id="field-civName" data-field="civName" maxlength="40" autocomplete="off" placeholder="${esc(plain(L.civNamePh))}" value="${esc(team.state.civName)}" ${team.submittedAt ? 'disabled' : ''} /></div>`,
-      primary:next(L) };
+      primary:next(L, !stepDone('civName',team)) };
   },
   geographyAnswer(ctx) {
     const { L, lang, team } = ctx, state = team.state, region = regions[state.mapPoint];
     const free = [...state.tech, ...state.civic].filter(id => priceOf(state.mapPoint, id) === 'free');
-    return { title:rich(L.geographyAnswer, lang), body:writing(ctx, 'geographyAnswer', { hideLabel:true, extra:`<div class="context-strip"><strong>${state.mapPoint} · ${rich(region.name[lang], lang, { terms:false })}</strong> · ${region.resources.map(item => rich(item[lang], lang, { terms:false })).join(sep(lang))}${free.length ? `<br>★ ${free.map(id => cardName(cardById[id], lang)).join(sep(lang))}` : ''}</div>` }), primary:next(L, !stepDone('geographyAnswer', team)) };
+    return { title:rich(L.writingTitle_geographyAnswer, lang), body:writing(ctx, 'geographyAnswer', { extra:`<div class="context-strip"><strong>${state.mapPoint} · ${rich(region.name[lang], lang, { terms:false })}</strong> · ${region.resources.map(item => rich(item[lang], lang, { terms:false })).join(sep(lang))}${free.length ? `<br>★ ${free.map(id => cardName(cardById[id], lang)).join(sep(lang))}` : ''}</div>` }), primary:next(L, !stepDone('geographyAnswer', team)) };
   },
   government(ctx) { const { L, lang, team } = ctx; return { title:rich(L.governmentTitle, lang), lead:rich(L.governmentLead, lang), body:writing(ctx, 'governmentAnswer', { chips:chipGroup(ctx, 'government') }), primary:next(L, !stepDone('government', team)) }; },
   economy(ctx) { const { L, lang, team } = ctx; return { title:rich(L.economyTitle, lang), lead:rich(L.economyLead, lang), body:writing(ctx, 'economyAnswer', { chips:chipGroup(ctx, 'economy') }), primary:next(L, !stepDone('economy', team)) }; },
   beliefs(ctx) { const { L, lang, team } = ctx; return { title:rich(L.beliefsTitle, lang), lead:rich(L.beliefsLead, lang), body:writing(ctx, 'beliefAnswer', { chips:chipGroup(ctx, 'beliefs') }), primary:next(L, !stepDone('beliefs', team)) }; },
-  shapeAnswer(ctx) { const { L, lang, team } = ctx; return { title:rich(L.shapeAnswer, lang), body:writing(ctx, 'shapeAnswer', { hideLabel:true }), primary:next(L, !stepDone('shapeAnswer', team)) }; },
+  shapeAnswer(ctx) { const { L, lang, team } = ctx; return { title:rich(L.writingTitle_shapeAnswer, lang), body:writing(ctx, 'shapeAnswer'), primary:next(L, !stepDone('shapeAnswer', team)) }; },
   notChosenAnswer(ctx) {
     const { L, lang, team } = ctx, state = team.state, all = [...trees.tech, ...trees.civic].map(card => card.id).filter(id => !state.tech.includes(id) && !state.civic.includes(id));
-    const hard = all.filter(id => ['hard','impossible'].includes(priceOf(state.mapPoint, id)));
-    return { title:rich(L.notChosenAnswer, lang), body:writing(ctx, 'notChosenAnswer', { hideLabel:true, extra:`<div class="context-strip"><p>${rich(L.notChosenHelp, lang)}</p>${hard.length ? `<p><strong>${rich(L.notChosenHard, lang)}:</strong> ${hard.map(id => `${priceSymbol[priceOf(state.mapPoint, id)]} ${cardName(cardById[id], lang)}`).join(sep(lang))}</p>` : ''}<p><strong>${rich(L.notChosenOther, lang)}:</strong> ${all.filter(id => !hard.includes(id)).map(id => cardName(cardById[id], lang)).join(sep(lang))}</p></div>` }), primary:next(L, !stepDone('notChosenAnswer', team)) };
+    const feasible = all.filter(id=>{const cost=minimumCost(state.mapPoint,id);return Number.isFinite(cost)&&cost<=BUDGET});
+    return { title:rich(L.writingTitle_notChosenAnswer, lang), body:writing(ctx, 'notChosenAnswer', { extra:`<div class="context-strip"><p>${rich(L.notChosenHelp, lang)}</p><p>${feasible.map(id=>cardName(cardById[id],lang)).join(sep(lang))}</p></div>` }), primary:next(L, !stepDone('notChosenAnswer', team)) };
   },
   check(ctx) {
     const { L, lang, team } = ctx, state = team.state;
@@ -227,11 +266,11 @@ const screens = {
     return { title:rich(L.checkTitle, lang), lead:rich(L.checkLead, lang), wide:true,
       body:`<dl class="check">${row(rich(L.civName, lang), esc(state.civName), 'civName')}
         ${row(L.tree_tech, state.tech.map(id => chip(id, lang)).join(' '), 'techReview')}${row(L.tree_civic, state.civic.map(id => chip(id, lang)).join(' '), 'civicReview')}
-        ${row(rich(L.eventAnswer, lang), text('eventAnswer'), 'eventAnswer')}${row(rich(L.geographyAnswer, lang), text('geographyAnswer'), 'geographyAnswer')}
+        ${row(rich(L.writingTitle_eventAnswer, lang), text('eventAnswer'), 'eventAnswer')}${row(rich(L.writingTitle_geographyAnswer, lang), text('geographyAnswer'), 'geographyAnswer')}
         ${row(rich(L.governmentTitle, lang), [chipText('government', state.government), text('governmentAnswer')].filter(Boolean).join('<br>'), 'government')}
         ${row(rich(L.economyTitle, lang), [chipText('economy', state.economy), text('economyAnswer')].filter(Boolean).join('<br>'), 'economy')}
         ${row(rich(L.beliefsTitle, lang), [chipText('beliefs', state.beliefs), text('beliefAnswer')].filter(Boolean).join('<br>'), 'beliefs')}
-        ${row(rich(L.shapeAnswer, lang), text('shapeAnswer'), 'shapeAnswer')}${row(rich(L.notChosenAnswer, lang), text('notChosenAnswer'), 'notChosenAnswer')}</dl>`, primary:next(L) };
+        ${row(rich(L.writingTitle_shapeAnswer, lang), text('shapeAnswer'), 'shapeAnswer')}${row(rich(L.writingTitle_notChosenAnswer, lang), text('notChosenAnswer'), 'notChosenAnswer')}</dl>`, primary:next(L) };
   },
   submit(ctx) {
     const { L, lang, team } = ctx;
@@ -257,19 +296,31 @@ const screens = {
     return { title:rich(L.revealTitle, lang), wide:true, cls:'reveal-in',
       body:`<div class="reveal-head"><span class="letter-badge">${point}</span><div><h2>${rich(reveal.name[lang], lang, { terms:false })}</h2><p class="muted">${rich(reveal.when[lang], lang, { terms:false })}</p></div></div>
         <div class="reveal-photos">${photo(`${point}/reveal-1.webp`, plain(reveal.name[lang]), { eager:true })}${photo(`${point}/reveal-2.webp`, plain(reveal.name[lang]))}</div>
-        <ul class="facts">${reveal.facts[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul>`, primary:next(L) };
+        ${historicalReading(reveal,lang,L)}`, primary:next(L) };
   },
   revealCompare(ctx) {
-    const { L, lang, team } = ctx, state = team.state, reveal = regions[state.mapPoint].reveal, had = reveal.had, mine = [...state.tech, ...state.civic];
+    const { L, lang, team } = ctx, state = team.state, reveal = regions[state.mapPoint].reveal, mine = [...state.tech, ...state.civic];
     const col = (label, ids, cls) => `<section class="compare-col ${cls}"><h2>${label}</h2>${ids.length ? `<ul>${ids.map(id => `<li>${chip(id, lang)}</li>`).join('')}</ul>` : `<p class="muted">—</p>`}</section>`;
     return { title:rich(L.compareTitle, lang), lead:rich(L.compareLead, lang), wide:true,
-      body:`<div class="compare">${col(rich(L.bothLabel, lang), had.filter(id => mine.includes(id)), 'both')}${col(rich(L.onlyYou, lang), mine.filter(id => !had.includes(id)), 'you')}${col(rich(L.onlyHistory, lang), had.filter(id => !mine.includes(id)), 'history')}</div>${think(L.thinkTitle, [L.surprise, L.historyAskHarder, L.historyAskLeftOut], lang)}
-        <details class="history-context"><summary>${rich(L.historyReveal, lang, { terms:false })}</summary><h2>${rich(L.historyDifficultyTitle, lang)}</h2><ul>${(reveal.difficulty?.[lang] ?? []).map(text=>`<li>${rich(text,lang)}</li>`).join('')}</ul><h3>${rich(L.historyLimitsTitle, lang)}</h3><p>${rich(L.historyLimits,lang)}</p>${reveal.sources?.length ? `<p class="small history-sources"><strong>${L.historySources}:</strong> ${reveal.sources.map(source=>`<a href="${esc(source.url)}" target="_blank" rel="noopener">${rich(source.title[lang],lang,{terms:false})}</a>`).join(' · ')}</p>` : ''}</details>`, primary:next(L) };
+      body:(reveal.examples ?? [reveal]).map(example=>`<section class="historical-example"><h2>${rich(example.name[lang],lang,{terms:false})}</h2><p class="muted">${rich(example.when[lang],lang,{terms:false})}</p><div class="compare">${col(rich(L.bothLabel,lang),example.had.filter(id=>mine.includes(id)),'both')}${col(rich(L.onlyYou,lang),mine.filter(id=>!example.had.includes(id)),'you')}${col(rich(L.onlyHistory,lang),example.had.filter(id=>!mine.includes(id)),'history')}</div></section>`).join(''), primary:next(L) };
+  },
+  historyDifferenceAnswer:ctx=>historyWriting(ctx,'historyDifferenceAnswer'),
+  historyWorkAnswer:ctx=>historyWriting(ctx,'historyWorkAnswer'),
+  historyOmissionAnswer:ctx=>historyWriting(ctx,'historyOmissionAnswer'),
+  reflectionReview(ctx) {
+    const {L,lang,team}=ctx;
+    return {title:rich(L.reflectionReviewTitle,lang),lead:rich(L.reflectionReviewLead,lang),body:`<dl class="check">${reflectionFields.map(key=>`<div class="check-row"><dt>${rich(L[`writingTitle_${key}`],lang)}</dt><dd>${esc(team.state.reflection?.[key]??'')}</dd><dd class="edit">${team.state.reflection?.submittedAt?'':btn(L.edit,{nav:`step:${key}`},{kind:'small'})}</dd></div>`).join('')}</dl>`,primary:next(L)};
+  },
+  reflectionSubmit(ctx) {
+    const {L,lang,team}=ctx;
+    if(team.state.reflection?.submittedAt)return {title:`✓ ${rich(L.reflectionComplete,lang)}`,body:`<p>${rich(L.reflectionCompleteNote,lang)}</p>`,primary:next(L)};
+    const gaps=reflectionGaps(team.state);
+    return {title:rich(L.reflectionSubmit,lang),lead:rich(L.reflectionSubmitLead,lang),body:gaps.length?`<div class="gaps"><h2>${rich(L.reflectionStillMissing,lang)}</h2>${gaps.map(key=>btn(L[`writingTitle_${key}`],{nav:`step:${key}`},{kind:'small'})).join('')}</div>`:'',primary:btn(L.reflectionSubmit,{act:'submitReflection'},{disabled:!!gaps.length})};
   },
   takeaway(ctx) {
     const { L, lang } = ctx;
     return { title:rich(L.takeawayTitle, lang), cls:'takeaway',
-      body:`<p class="statement">${rich(L.takeawayMain, lang)}</p><ol class="takeaways">${L.takeawayPoints.map(text => `<li>${rich(text, lang)}</li>`).join('')}</ol><p class="muted">➡️ ${rich(L.takeawayNext, lang)}</p>`,
+      body:`<p class="statement">${rich(L.takeawayMain, lang)}</p><div class="prose">${lines(L.takeawayParagraphs??L.takeawayPoints,lang)}</div><p class="muted">➡️ ${rich(L.takeawayNext, lang)}</p>`,
       primary:btn(rich(L.posterTitle, lang), { nav:'step:poster' }) };
   }
 };
@@ -341,7 +392,7 @@ function review(ctx, tree) {
 function consequence(ctx, plan, full) {
   const { L, lang, team } = ctx, state = team.state;
   if (plan.protectedBy) return rich(fmt(L.youAreSafe, cardPlain(cardById[plan.protectedBy], lang)), lang);
-  if (state.event.roll === 1) return rich(state.event.lost.includes('irrigation') ? L.youLostIrrigation : L.nothingToLose, lang);
+  if (eventId(state.event) === 1) return rich(state.event.lost.includes('irrigation') ? L.youLostIrrigation : L.nothingToLose, lang);
   if (plan.kind === 'choose') return rich(L.youMustChoose, lang);
   if (full && plan.kind === 'lose') return plan.options.length ? esc(fmt(L.youMustLose, plan.count)) : rich(L.nothingFits, lang);
   if (full && plan.kind === 'gain') return plan.options.length ? rich(L.youMayGain, lang) : rich(L.nothingFits, lang);
@@ -358,14 +409,14 @@ function changes(ctx, inline = false) {
 }
 
 // While writing, the team's cards, event and society choices stay in view as evidence.
-const withChoices = new Set(['eventAnswer','geographyAnswer','government','economy','beliefs','shapeAnswer','notChosenAnswer']);
+const withChoices = new Set(['eventAnswer','geographyAnswer','government','economy','beliefs','shapeAnswer','notChosenAnswer',...reflectionFields]);
 function choicesPanel(ctx) {
   const { L, lang, team } = ctx, state = team.state, event = state.event;
   const cards = tree => state[tree].length ? state[tree].map(id => `${chip(id, lang)}${statusOf(state, id) === 'partly' ? statusBadge('partly', L) : ''}`).join(' ') : '<span class="muted">—</span>';
   const choice = (group, values) => [].concat(values).filter(Boolean).map(value => esc(plain(L[`chips_${group}`][value]))).join(sep(lang));
   const society = [['governmentTitle', choice('government', state.government)], ['economyTitle', choice('economy', state.economy)], ['beliefsTitle', choice('beliefs', state.beliefs)]]
     .filter(([, text]) => text).map(([key, text]) => `<p><strong>${rich(L[key], lang, { terms:false })}:</strong> ${text}</p>`).join('');
-  const eventPart = event ? `<section><h3>${rich(L.posterEvent, lang, { terms:false })}</h3><p>🎲 ${event.roll} · ${rich(L[`event${event.roll}`], lang, { terms:false })}</p>${event.lost.length ? `<p class="lost">${L.lostLabel}: ${event.lost.map(id => chip(id, lang)).join(' ')}</p>` : ''}${event.gained.length ? `<p>${L.gainedLabel}: ${event.gained.map(id => chip(id, lang)).join(' ')}</p>` : ''}</section>` : '';
+  const eventPart = event ? `<section><h3>${rich(L.posterEvent, lang, { terms:false })}</h3><p>🎲 ${eventDiceText(event)} · ${rich(L[`event${eventId(event)}`], lang, { terms:false })}</p>${event.lost.length ? `<p class="lost">${L.lostLabel}: ${event.lost.map(id => chip(id, lang)).join(' ')}</p>` : ''}${event.gained.length ? `<p>${L.gainedLabel}: ${event.gained.map(id => chip(id, lang)).join(' ')}</p>` : ''}</section>` : '';
   return `<aside class="side-panel" aria-label="${esc(L.yourChoices)}"><h2>${L.yourChoices}</h2>
     <section><h3>${L.tree_tech}</h3><p>${cards('tech')}</p></section><section><h3>${L.tree_civic}</h3><p>${cards('civic')}</p>${society}</section>${eventPart}</aside>`;
 }

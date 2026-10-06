@@ -35,6 +35,7 @@ export const priceSymbol = { free:'★', normal:'●', hard:'△', impossible:'�
 export const label = text => ruby(esc(text));
 export const priceBadge = (price, L) => `<span class="price price-${price}"><b aria-hidden="true">${priceSymbol[price]}</b> ${label(L[`price_${price}`])}</span>`;
 export const statusBadge = (status, L) => `<span class="status status-${status}">${label(L[`status_${status}`])}</span>`;
+export const eventDiceText = event => (event?.dice?.length > 1 ? `${event.dice.join(' / ')} → ` : '') + (event?.id ?? event?.roll ?? '');
 export const heroPath = point => credits[`${point}/atmosphere.webp`] ? `${point}/atmosphere.webp` : `${point}/hero.webp`;
 
 // A photo with its credit line (required by the licences). Missing photos fall back to a
@@ -63,8 +64,10 @@ export function climateCharts(climate, L, lang) {
   const x = i => left + (i + 0.5) * (right - left) / 12;
   const step = (right - left) / 12;
   const monthLabels = months.map((m, i) => `<text class="tick" x="${x(i).toFixed(1)}" y="${H - 12}" text-anchor="middle">${esc(lang === 'ja' ? String(i + 1) : m.slice(0,1))}</text>`).join('');
+  // An optional estimate for about 2000 BCE is drawn as dashed marks over today's values.
+  const past = climate.past ? { rain:climate.rain.map(v => Math.round(v * climate.past.rainFactor)), temp:climate.temp.map(v => Math.round((v + climate.past.tempShift) * 10) / 10) } : null;
   // Rain: bars from a zero baseline.
-  const rainMax = Math.max(50, Math.ceil(Math.max(...climate.rain) / 50) * 50);
+  const rainMax = Math.max(50, Math.ceil(Math.max(...climate.rain, ...(past?.rain ?? [])) / 50) * 50);
   const ry = v => bottom - v / rainMax * (bottom - top);
   const rainGrid = [0, rainMax / 2, rainMax].map(v => `<line class="grid" x1="${left}" x2="${right}" y1="${ry(v)}" y2="${ry(v)}"/><text class="tick" x="${left - 6}" y="${ry(v) + 4}" text-anchor="end">${v}</text>`).join('');
   const peak = climate.rain.indexOf(Math.max(...climate.rain));
@@ -74,20 +77,23 @@ export function climateCharts(climate, L, lang) {
     const path = h ? `M${bx},${bottom}V${by + r}Q${bx},${by} ${bx + r},${by}H${bx + w - r}Q${bx + w},${by} ${bx + w},${by + r}V${bottom}Z` : '';
     return `<g class="mark"><rect class="hit" x="${(x(i) - step / 2).toFixed(1)}" y="${top}" width="${step.toFixed(1)}" height="${bottom - top}"/>${path ? `<path class="bar" d="${path}"/>` : ''}<title>${esc(months[i])}: ${v} mm</title></g>`;
   }).join('');
+  const pastBars = past && climate.past.rainFactor !== 1 ? past.rain.map((v, i) => { const w = step * 0.62, h = v / rainMax * (bottom - top); return h ? `<rect class="bar-past" x="${(x(i) - w / 2).toFixed(1)}" y="${(bottom - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(months[i])}: ~${v} mm (${esc(L.climatePastLabel)})</title></rect>` : ''; }).join('') : '';
   const peakLabel = `<text class="value" x="${x(peak).toFixed(1)}" y="${(ry(climate.rain[peak]) - 6).toFixed(1)}" text-anchor="middle">${climate.rain[peak]}</text>`;
   // Temperature: one line with markers; the highest and lowest months are labelled.
-  const tMin = Math.min(0, Math.floor((Math.min(...climate.temp) - 3) / 5) * 5), tMax = Math.ceil((Math.max(...climate.temp) + 3) / 5) * 5;
+  const allTemps = [...climate.temp, ...(past?.temp ?? [])];
+  const tMin = Math.min(0, Math.floor((Math.min(...allTemps) - 3) / 5) * 5), tMax = Math.ceil((Math.max(...allTemps) + 3) / 5) * 5;
   const ty = v => bottom - (v - tMin) / (tMax - tMin) * (bottom - top);
   const ticks = [tMin, Math.round((tMin + tMax) / 2), tMax];
   const tempGrid = ticks.map(v => `<line class="grid${v === 0 ? ' zero' : ''}" x1="${left}" x2="${right}" y1="${ty(v)}" y2="${ty(v)}"/><text class="tick" x="${left - 6}" y="${ty(v) + 4}" text-anchor="end">${v}</text>`).join('')
     + (tMin < 0 && !ticks.includes(0) ? `<line class="grid zero" x1="${left}" x2="${right}" y1="${ty(0)}" y2="${ty(0)}"/>` : '');
   const line = climate.temp.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${ty(v).toFixed(1)}`).join('');
+  const pastLine = past && climate.past.tempShift ? `<path class="line-past" d="${past.temp.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${ty(v).toFixed(1)}`).join('')}"><title>${esc(L.climatePastLabel)}</title></path>` : '';
   const hi = climate.temp.indexOf(Math.max(...climate.temp)), lo = climate.temp.indexOf(Math.min(...climate.temp));
   const dots = climate.temp.map((v, i) => `<g class="mark"><rect class="hit" x="${(x(i) - step / 2).toFixed(1)}" y="${top}" width="${step.toFixed(1)}" height="${bottom - top}"/><circle class="dot" cx="${x(i).toFixed(1)}" cy="${ty(v).toFixed(1)}" r="4.5"/><title>${esc(months[i])}: ${v} °C</title></g>`).join('');
   const tempLabels = [...new Set([hi, lo])].map(i => `<text class="value" x="${x(i).toFixed(1)}" y="${(ty(climate.temp[i]) + (i === hi ? -10 : 18)).toFixed(1)}" text-anchor="middle">${climate.temp[i]}°</text>`).join('');
-  const table = `<details class="numbers"><summary>${L.climateTable}</summary><div class="table-scroll"><table><thead><tr><th scope="col">${L.month}</th>${months.map(m => `<th scope="col">${esc(m)}</th>`).join('')}</tr></thead><tbody><tr><th scope="row">mm</th>${climate.rain.map(v => `<td>${v}</td>`).join('')}</tr><tr><th scope="row">°C</th>${climate.temp.map(v => `<td>${v}</td>`).join('')}</tr></tbody></table></div></details>`;
+  const table = `<details class="numbers"><summary>${L.climateTable}</summary><div class="table-scroll"><table><thead><tr><th scope="col">${L.month}</th>${months.map(m => `<th scope="col">${esc(m)}</th>`).join('')}</tr></thead><tbody><tr><th scope="row">mm</th>${climate.rain.map(v => `<td>${v}</td>`).join('')}</tr><tr><th scope="row">°C</th>${climate.temp.map(v => `<td>${v}</td>`).join('')}</tr>${past ? `<tr><th scope="row">~mm ${esc(L.climatePastShort)}</th>${past.rain.map(v => `<td>${v}</td>`).join('')}</tr><tr><th scope="row">~°C ${esc(L.climatePastShort)}</th>${past.temp.map(v => `<td>${v}</td>`).join('')}</tr>` : ''}</tbody></table></div></details>`;
   return `<div class="charts">
-    <figure class="chart rain"><figcaption>${L.rainTitle}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L.rainTitle)}">${rainGrid}${bars}${peakLabel}${monthLabels}</svg></figure>
-    <figure class="chart temp"><figcaption>${L.tempTitle}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L.tempTitle)}">${tempGrid}<path class="line" d="${line}"/>${dots}${tempLabels}${monthLabels}</svg></figure>
-  </div>${table}`;
+    <figure class="chart rain"><figcaption>${L.rainTitle}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L.rainTitle)}">${rainGrid}${bars}${pastBars}${peakLabel}${monthLabels}</svg></figure>
+    <figure class="chart temp"><figcaption>${L.tempTitle}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L.tempTitle)}">${tempGrid}${pastLine}<path class="line" d="${line}"/>${dots}${tempLabels}${monthLabels}</svg></figure>
+  </div>${past ? `<p class="climate-legend"><span class="key-today"></span>${esc(L.climateTodayLabel)} <span class="key-past"></span>${esc(L.climatePastLabel)}</p><aside class="climate-past"><h2>${esc(L.climatePastTitle)}</h2><p>${esc(climate.past.note[lang])}</p><p class="small muted">${esc(L.climatePastCaveat)} <a href="${esc(climate.past.source.url)}" target="_blank" rel="noopener">${esc(climate.past.source.title[lang])}</a></p></aside>` : ''}${table}`;
 }

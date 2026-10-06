@@ -1,11 +1,11 @@
-import { applyAction, normalizeCode, isCodeShape, cascadeOf, priceOf, writableFields, fieldLimit } from '../shared/game.js';
+import { applyAction, normalizeCode, isCodeShape, cascadeOf, priceOf, writableFields, fieldLimit, reflectionFields } from '../shared/game.js';
 import { dictionary } from '../shared/i18n.js';
 import { glossary } from '../shared/glossary.js';
 import { credits } from '../shared/credits.js';
 import { trees } from '../shared/cards.js';
 import { worldMap } from '../shared/regions.js';
 import { steps, stepById, stepDone, stepAvailable, nextStep, neighbourStep, stepApplies, teamStep, chapterOf } from '../shared/flow.js';
-import { studentPage, chapterCard } from './screens.js';
+import { studentPage } from './screens.js';
 import { teacherPage, teacherList, teacherDetailView, teacherPrint, posterOverlay, revealPanel, missingLetters } from './teacher.js';
 import { blocker } from './tree.js';
 import { esc, fmt, rich, plain, photo } from './ui.js';
@@ -44,7 +44,7 @@ const wait=ms=>new Promise(done=>setTimeout(done,ms));
 function toast(message,type='info'){notice=message;noticeType=type;renderNotice();setTimeout(()=>{if(notice===message){notice='';renderNotice()}},4600)}
 function renderNotice(){noticeBox.innerHTML=notice?`<div class="toast ${noticeType}">${rich(notice,lang,{terms:false})}</div>`:''}
 // Refusals carry a code; the page shows them in the student's language.
-const message=error=>L().errors?.[error.code]??error.message??L().error;
+const message=error=>L().errors?.[error.code]??L()[error.code]??error.message??L().error;
 async function api(path,body,method){
   const res=await fetch(path,{method:method||(body===undefined?'GET':'POST'),headers:body===undefined&&!method?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
   const data=await res.json();
@@ -106,7 +106,12 @@ function openStream(){
   stream.addEventListener('reveal',event=>{
     const open=JSON.parse(event.data).reveal;if(open===reveal)return;reveal=open;
     if(session?.role==='teacher'){patchTeacher();return}
-    if(session?.role==='student'){if(!reveal&&chapterOf(ui.step)==='reveal')go('wait',{direction:'back'});else render()}
+    if(session?.role==='student'){
+      if(!reveal&&chapterOf(ui.step)==='reveal'){
+        // Keep unfinished drafts while immediately returning to the teacher gate.
+        ui.step='wait';ui.sub=null;storeStep();render();
+      } else render();
+    }
   });
   stream.addEventListener('teams',event=>{
     teams=JSON.parse(event.data).teams;
@@ -125,6 +130,9 @@ function onTeamEvent(event){
   const data=JSON.parse(event.data);roster=data.roster??roster;
   if(!(data.team.version>Number(serverTeam?.version??-1)))return;
   const previous=team;adoptTeam(data.team);
+  if(previous?.submittedAt&&!team.submittedAt&&chapterOf(ui.step)==='reveal'){
+    ui.step=teamStep(team,reveal).id;ui.sub=null;storeStep();
+  }
   // A teammate rolled the event while this student watched the roll screen.
   if(!previous?.state.event&&team.state.event&&ui.step==='eventRoll'&&!ui.rolling)landDie('event');
   if(!previous?.state.event&&team.state.event&&['techTree','techReview','civicTree','civicReview'].includes(ui.step)){
@@ -147,7 +155,7 @@ function updatePresence(){
 function captureFocus(){
   const el=document.activeElement;
   if(!el||el===document.body||!app.contains(el))return null;
-  const key=['field','card','act','nav','select','action','mode','term','sub'].find(name=>el.dataset?.[name]!==undefined);
+  const key=['field','card','preview','act','nav','select','action','mode','term','sub'].find(name=>el.dataset?.[name]!==undefined);
   if(!key)return el.id?{id:el.id}:null;
   return {key:[`data-${key}`,el.dataset[key]],selection:typeof el.selectionStart==='number'?[el.selectionStart,el.selectionEnd]:null};
 }
@@ -245,13 +253,8 @@ async function transition(direction,change){
 async function go(step,{direction='forward'}={}){
   try{await actionQueue;await flushAll()}catch{return false}
   if(!team||!stepById[step]||(chapterOf(step)==='reveal'&&!reveal))return false;
-  const before=chapterOf(ui.step);
   await transition(direction,()=>{ui.step=step;ui.sub=null;ui.selected='';storeStep()});
-  if(step==='where'&&!reducedMotion.matches&&!seen.has(`zoom:${team.state.mapPoint}`)){
-    seen.add(`zoom:${team.state.mapPoint}`);saveSeen();
-    ui.anim={key:`where:${team.state.mapPoint}`};render();setTimeout(()=>{if(ui.anim?.key?.startsWith('where:')){ui.anim=null;render()}},2800);
-  }
-  if(direction==='forward'&&chapterOf(step)!==before)showChapterCard(chapterOf(step));
+  // Chapter labels in the page provide orientation without obscuring the reading.
 }
 async function goNext(){
   try{await actionQueue;await flushAll()}catch{return}
@@ -262,7 +265,7 @@ async function goNext(){
 }
 async function navigate(target){
   if(navigating)return;
-  navigating=true;
+  navigating=true;render();
   try{
   if(target==='next')return await goNext();
   if(target==='back'){const prev=neighbourStep(ui.step,team,-1);if(prev)await go(prev,{direction:'back'});return}
@@ -277,14 +280,6 @@ async function navigate(target){
   const forward=steps.findIndex(step=>step.id===goal)>steps.findIndex(step=>step.id===ui.step);
   await go(goal,{direction:forward?'forward':'back'});
   }finally{navigating=false;render()}
-}
-function showChapterCard(chapter){
-  if(reducedMotion.matches||seen.has(`chapter:${chapter}`))return;
-  seen.add(`chapter:${chapter}`);saveSeen();
-  const holder=document.createElement('div');holder.innerHTML=chapterCard(chapter,studentContext());
-  const card=holder.firstElementChild;document.body.append(card);
-  const done=()=>{if(card.classList.contains('leaving'))return;card.classList.add('leaving');setTimeout(()=>card.remove(),450)};
-  card.addEventListener('click',done);setTimeout(done,1600);
 }
 function openSub(sub){transition('forward',()=>{ui.sub=sub})}
 function closeSub(){transition('back',()=>{ui.sub=null})}
@@ -398,6 +393,15 @@ async function doAct(value){
   } else if(kind==='submit'){
     try{await actionQueue;await flushAll();const data=await api('/api/team/submit',{});adoptTeam(data.team);roster=data.roster;render();toast(`✓ ${L().submitted}`)}
     catch(error){toast(message(error),'error')}
+  } else if(kind==='tool'){
+    ui.markTool=a;render();
+  } else if(kind==='mark'){
+    // Tapping a card again with the same marker clears it; marks are shared with the team.
+    const tool=ui.markTool||'easy';
+    act({type:'predict',id:a,mark:state.predictions?.[a]===tool?'':tool}).catch(()=>{});
+  } else if(kind==='submitReflection'){
+    try{await actionQueue;await flushAll();const data=await api('/api/team/reflection/submit',{expectedVersion:team.version});adoptTeam(data.team);roster=data.roster;render();toast(`✓ ${L().reflectionComplete}`)}
+    catch(error){if(error.team)adoptTeam(error.team);render();toast(message(error),'error')}
   }
 }
 
@@ -413,7 +417,7 @@ function saveField(key,value){
   const request=(savingFields.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{
     if(epoch!==sessionEpoch)return;
     try{
-      const data=await api('/api/team/action',{type:'field',key,value});if(epoch!==sessionEpoch)return;adoptTeam(data.team);roster=data.roster;
+      const data=await api('/api/team/action',{type:reflectionFields.includes(key)?'reflectionAnswer':'field',key,value});if(epoch!==sessionEpoch)return;adoptTeam(data.team);roster=data.roster;
       if(answerDrafts.get(key)===value)answerDrafts.delete(key);
       sync=answerDrafts.size?'saving':'saved';updateSync();
       // The Next button depends on whether the answer is filled.
@@ -421,7 +425,7 @@ function saveField(key,value){
     }catch(error){
       if(epoch!==sessionEpoch)return;
       sync=error.code==='submitted'?'saved':'offline';updateSync();
-      const hint=error.code==='submitted'?L().submittedSaveFailed:L().saveFailed;
+      const hint=error.code==='submitted'?L().submittedSaveFailed:reflectionFields.includes(key)&&['reflectionClosed','reflectionSubmitted','reflectionNeedsSubmission'].includes(error.code)?L().reflectionSaveFailed:L().saveFailed;
       toast(hint,'error');throw new Error(hint,{cause:error});
     }
   });
@@ -429,11 +433,13 @@ function saveField(key,value){
   request.finally(()=>{if(savingFields.get(key)===request)savingFields.delete(key)}).catch(()=>{});
   return request;
 }
-async function flushField(key){if(answerDrafts.has(key))await saveField(key,answerDrafts.get(key));else if(savingFields.has(key))await savingFields.get(key)}
+const blockedReflection=key=>reflectionFields.includes(key)&&(!submitted()||!reveal||!!team.state.reflection?.submittedAt);
+async function flushField(key){if(blockedReflection(key))return;if(answerDrafts.has(key))await saveField(key,answerDrafts.get(key));else if(savingFields.has(key))await savingFields.get(key)}
 async function flushAll(){
   for(const timer of saveTimers.values())clearTimeout(timer);saveTimers.clear();
-  await Promise.all([...savingFields.values()]);
-  for(const [key,value] of [...answerDrafts])await saveField(key,value);
+  await Promise.all([...savingFields].map(([key,request])=>request.catch(error=>{if(!blockedReflection(key))throw error})));
+  // Closed historical drafts stay on this device without trapping the student here.
+  for(const [key,value] of [...answerDrafts])if(!blockedReflection(key))await saveField(key,value);
 }
 async function postPresence(field){if(presenceSent===field)return;presenceSent=field;try{await api('/api/team/presence',{field})}catch{}}
 
@@ -482,6 +488,10 @@ async function teacherAction(id){
   else if(id.startsWith('reopen:')){
     const teamId=Number(id.split(':')[1]);if(!confirm(L().reopenWarning))return;
     const data=await api(`/api/teacher/teams/${teamId}/reopen`,{});
+    teams=teams.map(x=>x.id===teamId?data.team:x);teacherDetail={...teacherDetail,...data.team};patchTeacher();
+  } else if(id.startsWith('reopen-reflection:')){
+    const teamId=Number(id.split(':')[1]);if(!confirm(L().reflectionReopenWarning))return;
+    const data=await api(`/api/teacher/teams/${teamId}/reopen-reflection`,{});
     teams=teams.map(x=>x.id===teamId?data.team:x);teacherDetail={...teacherDetail,...data.team};patchTeacher();
   } else if(id.startsWith('delete:')){
     const teamId=Number(id.split(':')[1]);if(!confirm(L().deleteWarning))return;
@@ -547,7 +557,7 @@ async function renameSubmit(event){
 
 // ---- Events (delegated once on the page) ----------------------------------------------
 app.addEventListener('click',event=>{
-  const el=event.target.closest('[data-term],[data-nav],[data-act],[data-card],[data-sub],[data-select],[data-action],[data-mode]');
+  const el=event.target.closest('[data-term],[data-nav],[data-act],[data-card],[data-preview],[data-sub],[data-select],[data-action],[data-mode]');
   if(!el||el.disabled)return;
   const d=el.dataset;
   if(session?.role==='student'&&ui.rolling)return;
@@ -558,6 +568,7 @@ app.addEventListener('click',event=>{
   if(d.nav!==undefined)navigate(d.nav);
   else if(d.act!==undefined)doAct(d.act);
   else if(d.card!==undefined){const [tree,id]=d.card.split(':');openSub({kind:'card',tree,id})}
+  else if(d.preview!==undefined){const [tree,id]=d.preview.split(':');openSub({kind:'preview',tree,id})}
   else if(d.sub==='close')closeSub();
   else if(d.select!==undefined){ui.selected=d.select;render()}
 });
@@ -573,7 +584,25 @@ app.addEventListener('input',event=>{
   if(el.dataset?.field!==undefined)fieldInput(el);
   else if(el.classList?.contains('code-input')){const cleaned=el.value.toUpperCase().replace(/[^A-Z0-9 -]/g,'').slice(0,16);if(el.value!==cleaned)el.value=cleaned}
 });
-app.addEventListener('focusin',event=>{if(writableFields.includes(event.target.dataset?.field))postPresence(event.target.dataset.field)});
+app.addEventListener('focusin',event=>{if([...writableFields,...reflectionFields].includes(event.target.dataset?.field))postPresence(event.target.dataset.field)});
+// Short definitions float beside tree cards on hover or keyboard focus; a tap or click opens the
+// full explanation. The tip lives outside the scrolling tree so its edges never clip it.
+let floatTip=null;
+function showTip(el){
+  const text=el?.dataset?.tip;if(!text){hideTip();return}
+  if(!floatTip){floatTip=document.createElement('div');floatTip.className='float-tip';floatTip.setAttribute('aria-hidden','true');document.body.append(floatTip)}
+  floatTip.textContent=text;floatTip.hidden=false;
+  const r=el.getBoundingClientRect(),w=floatTip.offsetWidth,h=floatTip.offsetHeight;
+  const y=r.top-h-8<8?r.bottom+8:r.top-h-8;
+  floatTip.style.left=`${Math.max(8,Math.min(window.innerWidth-w-8,r.left+r.width/2-w/2))}px`;floatTip.style.top=`${y}px`;
+}
+function hideTip(){if(floatTip)floatTip.hidden=true}
+app.addEventListener('pointerover',event=>{if(event.pointerType==='touch')return;const el=event.target.closest?.('[data-tip]');if(el)showTip(el)});
+app.addEventListener('pointerout',event=>{const el=event.target.closest?.('[data-tip]');if(el&&!el.contains(event.relatedTarget))hideTip()});
+app.addEventListener('focusin',event=>{if(event.target.dataset?.tip)showTip(event.target)});
+app.addEventListener('focusout',hideTip);
+app.addEventListener('click',hideTip);
+document.addEventListener('scroll',hideTip,true);
 app.addEventListener('focusout',event=>{const key=event.target.dataset?.field;if(key!==undefined){flushField(key).catch(()=>{});postPresence(null)}});
 document.addEventListener('keydown',event=>{
   if(event.key!=='Escape')return;

@@ -4,9 +4,9 @@ import { createHash, randomInt } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, sep } from 'node:path';
-import { normalizeCode, isCodeShape, writableFields } from '../shared/game.js';
+import { normalizeCode, isCodeShape, writableFields, reflectionFields } from '../shared/game.js';
 import { regions, worldMap } from '../shared/regions.js';
-import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, revealOpen, sameHash, setReveal, submitTeam, teamActivity, updateTeam } from './store.js';
+import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, reopenReflection, revealOpen, sameHash, setReveal, submitTeam, submitReflection, teamActivity, updateTeam } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const js = 'text/javascript; charset=utf-8', css = 'text/css; charset=utf-8';
@@ -16,7 +16,7 @@ const sourceFiles = {
   '/app.css':['public/app.css',css],
   '/game.css':['public/game.css',css]
 };
-for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
+for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher','regional-map','regional-geography']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
 for (const module of ['game','cards','regions','glossary','flow','i18n','credits']) sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,js];
 // Every image under public/assets is served at its own path.
 const imageTypes = {'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
@@ -266,7 +266,7 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (pathname==='/api/team/presence' && req.method==='POST') {
         const session=auth(req,'student');const body=await readJson(req);
         const field=body.field==null?null:String(body.field);
-        if (field!==null && !writableFields.includes(field)) {send(res,400,{error:'Unknown field'});return;}
+        if (field!==null && ![...writableFields,...reflectionFields].includes(field)) {send(res,400,{error:'Unknown field'});return;}
         const token=cookie(req);
         if (field) presence.set(token,{teamId:session.teamId,name:session.name,field});
         else presence.delete(token);
@@ -282,6 +282,13 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (pathname==='/api/team/submit' && req.method==='POST') {
         const session=auth(req,'student');await readJson(req);
         const team=submitTeam(session.teamId,session.name);
+        send(res,200,{team,roster:liveNames(team.id,session.name)});broadcast(team.id,session.name);return;
+      }
+      if (pathname==='/api/team/reflection/submit' && req.method==='POST') {
+        const session=auth(req,'student');const body=await readJson(req);
+        let team;
+        try {team=submitReflection(session.teamId,session.name,body.expectedVersion);}
+        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:getTeam(session.teamId)});return;}throw error;}
         send(res,200,{team,roster:liveNames(team.id,session.name)});broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/teacher/reveal' && req.method==='POST') {
@@ -332,6 +339,8 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       if (codeRoute && req.method==='POST') {auth(req,'teacher');await readJson(req);const code=regenerateCode(Number(codeRoute[1]));send(res,200,{code});return;}
       const reopenRoute=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/reopen$/);
       if (reopenRoute && req.method==='POST') {auth(req,'teacher');await readJson(req);const team=reopenTeam(Number(reopenRoute[1]));send(res,200,{team});broadcast(team.id);return;}
+      const reflectionReopen=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/reopen-reflection$/);
+      if (reflectionReopen && req.method==='POST') {auth(req,'teacher');await readJson(req);const team=reopenReflection(Number(reflectionReopen[1]));send(res,200,{team});broadcast(team.id);return;}
       send(res,404,{error:'Not found'});
     } catch(error) {
       if (res.headersSent) {res.end();return;}

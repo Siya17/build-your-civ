@@ -24,6 +24,24 @@
 .screen h1 ruby rt{font-size:.4em}
 .lead{font-size:clamp(1.05rem,2vw,1.2rem);color:#3d413f;max-width:62ch}
 .prose p{max-width:62ch}
+.preview-tree{margin:28px 0 36px}
+.preview-tree .node.is-preview{background:#fff;border-color:var(--teal);opacity:1;cursor:pointer}
+.history-evidence{padding:14px 18px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.history-evidence summary{cursor:pointer;font-weight:700}
+.float-tip{position:fixed;z-index:60;max-width:280px;padding:8px 12px;border-radius:10px;background:#1f2a28;color:#fff;font-size:.85rem;line-height:1.45;box-shadow:0 8px 24px #0004;pointer-events:none}
+.float-tip[hidden]{display:none}
+.list-row .tip-inline{color:var(--ink);margin-top:4px}
+.event-dice{display:flex;gap:40px;justify-content:center;flex-wrap:wrap}
+.paragraph-sources{font-size:.8rem;margin-top:-10px;color:var(--teal)}
+.historical-reading{max-width:76ch;margin:24px auto}
+.historical-reading p{max-width:76ch;line-height:1.85}
+.historical-example{margin:30px 0}
+.reflection-summary{border-top:1px solid var(--line);margin-top:24px;padding-top:20px}
+.reflection-status{font-size:.9rem;color:var(--teal)}
+.regional-map{margin:1.25rem 0}
+.regional-map svg{display:block;width:auto;height:auto;max-width:100%;max-height:650px;margin-inline:auto;background:#cce1e6;border:1px solid #adbbb4;border-radius:12px}
+.regional-map figcaption{font-size:.85rem;line-height:1.5;margin-top:.5rem}
+@media(max-width:760px){.event-dice{gap:24px}.event-dice .die-scene{--size:86px}}
 .prose.big p{font-size:clamp(1.1rem,2.2vw,1.3rem)}
 .screen-nav{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:14px 0 calc(14px + env(safe-area-inset-bottom));margin-top:28px;background:linear-gradient(to top,var(--bg) 75%,#f6f5f100);z-index:5;flex-wrap:wrap}
 .screen-nav .spacer{flex:1}
@@ -40,12 +58,11 @@
 @keyframes in-left{from{opacity:0;transform:translateX(-36px)}to{opacity:1;transform:none}}
 @keyframes out-left{to{opacity:0;transform:translateX(-36px)}}
 @keyframes out-right{to{opacity:0;transform:translateX(36px)}}
-html[data-nav=forward]::view-transition-old(screen){animation:out-left .2s ease-in both}
-html[data-nav=forward]::view-transition-new(screen){animation:in-right .32s ease-out both}
-html[data-nav=back]::view-transition-old(screen){animation:out-right .2s ease-in both}
-html[data-nav=back]::view-transition-new(screen){animation:in-left .32s ease-out both}
-.enter-forward .screen-inner{animation:in-right .32s ease-out both}
-.enter-back .screen-inner{animation:in-left .32s ease-out both}
+html::view-transition-old(root),html::view-transition-new(root){animation:none;mix-blend-mode:normal}
+html::view-transition-old(screen){display:none}
+html::view-transition-new(screen){animation:screen-arrive .16s ease-out both;mix-blend-mode:normal}
+.enter-forward .screen-inner,.enter-back .screen-inner{animation:screen-arrive .16s ease-out both}
+@keyframes screen-arrive{from{opacity:.35;transform:translateY(4px)}to{opacity:1;transform:none}}
 
 /* Chapter title card */
 .chapter-card{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:#122d2b;cursor:pointer;animation:card-in .35s ease-out both}
@@ -79,7 +96,7 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .hero-map{margin:4px 0 22px}
 .hero-map.small{max-width:760px}
 .choice-line{font-size:1.15rem;margin-top:-6px}
-.where-stage{position:relative;border-radius:var(--radius);overflow:hidden;aspect-ratio:16/9;background:#0d2a44;box-shadow:var(--shadow)}
+.where-stage{position:relative;border-radius:var(--radius);overflow:hidden;height:220px;background:#0d2a44;box-shadow:var(--shadow)}
 .where-stage .where-photo{position:absolute;inset:0;border-radius:0;box-shadow:none}
 .where-stage .where-photo img{height:100%;aspect-ratio:auto}
 .where-stage .world-map{position:absolute;z-index:2;right:12px;bottom:12px;width:30%;min-width:150px;border:3px solid #fff;border-radius:10px}
@@ -166,9 +183,9 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .tree-graph{position:relative;margin:0 auto}
 .tree-tech{width:752px;height:500px}.tree-civic{width:948px;height:564px}
 .tree-graph .edges{position:absolute;left:0;top:0;overflow:visible}
-.edge{fill:none;stroke:#c7c9c3;stroke-width:2}
+.edge{fill:none;stroke:#8f948b;stroke-width:2.5}
 .edge.lit{stroke:var(--teal);stroke-width:3.5}
-.head{fill:#c7c9c3}.head.lit{fill:var(--teal)}
+.head{fill:#8f948b}.head.lit{fill:var(--teal)}
 .c0{--c:0}.c1{--c:1}.c2{--c:2}.c3{--c:3}.c4{--c:4}
 .r0{--r:0}.r1{--r:1}.r2{--r:2}.r3{--r:3}.r4{--r:4}.r5{--r:5}.r6{--r:6}.r7{--r:7}.r8{--r:8}
 .node{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:6px;text-align:left;border:2px solid #cfd2cc;background:#fff;border-radius:12px;padding:4px 8px;font-size:.8rem;font-weight:700;line-height:1.15;color:var(--ink);transition:transform .15s,box-shadow .15s}
@@ -361,6 +378,7 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .reveal-head .letter-badge{width:56px;height:56px;font-size:1.6rem}
 .reveal-head h2{margin:0;font-size:clamp(1.3rem,3vw,1.8rem)}
 .reveal-photos{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:18px}
+.reveal-photos .photo img{height:100%;aspect-ratio:auto}
 .reveal-in .reveal-photos .photo{animation:reveal 1.2s ease-out both}
 .reveal-in .reveal-photos .photo:nth-child(2){animation-delay:.25s}
 @keyframes reveal{from{opacity:0;transform:scale(1.04);filter:blur(6px)}}
@@ -396,6 +414,7 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
   .chapters span{display:none}
   .chapters .ch-current span{display:inline}
   .split,.charts,.two-col,.choice-cards,.reveal-photos{grid-template-columns:1fr}
+  .reveal-photos .photo img{height:auto;aspect-ratio:16/10}
   .four-steps,.price-groups,.event-table,.compare,.takeaways,.poster-body,.poster-wide{grid-template-columns:1fr}
   .check-row{grid-template-columns:1fr auto}
   .check-row dd:not(.edit){grid-column:1/-1}
@@ -418,3 +437,26 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
   html::view-transition-old(screen),html::view-transition-new(screen){animation:none}
 }
 @media print{.chapters,.screen-nav,.topbar,.team-ahead{display:none!important}}
+/* Prediction marks on the challenge screen, and their comparison with the regional ratings. */
+.mark-panel{margin:28px 0 8px}
+.mark-tools{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}
+.mark-tool{border:2px solid var(--mark);background:#fff;color:var(--mark);border-radius:999px;padding:6px 14px;font-weight:700;cursor:pointer}
+.mark-tool[aria-pressed="true"]{background:var(--mark);color:#fff}
+.m-easy{--mark:#2f7d4f}.m-normal{--mark:#4f6577}.m-hard{--mark:#b4532a}
+.node.is-mark{border-color:#cfd2cc;cursor:pointer}
+.node.is-mark:hover{transform:translateY(-2px);box-shadow:0 6px 14px #1f5f5a22}
+.node.is-mark[class*=" m-"]{border-color:var(--mark);box-shadow:inset 0 0 0 1px var(--mark)}
+.node-mark{position:absolute;right:-6px;top:-11px;padding:1px 7px;border-radius:999px;background:var(--mark);color:#fff;font-size:.62rem;line-height:1.5;white-space:nowrap}
+.mark-result{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:.75rem;font-weight:700;color:#fff;background:var(--mark)}
+.mark-result.differs{background:#fff;color:var(--mark);border:1.5px dashed var(--mark)}
+.marks-result{font-weight:700;margin:0 0 14px}
+.short-note textarea{min-height:0}
+/* Estimated climate about 2000 BCE, drawn over today's averages. */
+.chart .bar-past{fill:none;stroke:#2b2f2c;stroke-width:1.6;stroke-dasharray:4 3}
+.chart .line-past{fill:none;stroke:#2b2f2c;stroke-width:2.2;stroke-dasharray:6 4}
+.climate-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+.climate-legend .key-today,.climate-legend .key-past{display:inline-block;width:22px;height:0;border-top:3px solid #7a8a86}
+.climate-legend .key-past{border-top:3px dashed #2b2f2c;margin-left:10px}
+.climate-past{margin:12px 0;padding:14px 18px;border-left:4px solid var(--rust);background:#fff;border-radius:8px}
+.climate-past h2{font-size:1rem;margin:0 0 6px}
+.climate-past p{margin:0 0 6px}

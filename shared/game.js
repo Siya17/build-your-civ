@@ -1,7 +1,7 @@
 // The classroom rules from the Week 2 slides, shared by the browser and the server.
 // Prices (slide 18): ★ free = 0 points, normal = 1, △ hard = 2 points and a success roll,
 // ✗ impossible. Each tree has 7 points. Every arrow parent is required to unlock a card.
-// The event (slide 22) is one die roll per team; after it the trees are locked.
+// Each team rolls two dice for one of twelve events; after it the trees are locked.
 // Dice are never rolled here unless the caller passes `rollDie` (the server does).
 import { tech, civic, trees, treeIds, cardById, treeOf, childrenOf, parentsMet, missingParents, prerequisiteIds } from './cards.js';
 import { regions, points } from './regions.js';
@@ -10,13 +10,23 @@ export { trees, treeIds, cardById, treeOf, points, parentsMet, missingParents, p
 export const BUDGET = 7;
 export const isPoint = point => typeof point === 'string' && Object.hasOwn(regions, point);
 export const textFields = ['eventAnswer','geographyAnswer','governmentAnswer','economyAnswer','beliefAnswer','shapeAnswer','notChosenAnswer'];
-export const writableFields = [...textFields, 'civName'];
-export const fieldLimit = key => key === 'civName' ? 40 : 600;
+// Short, optional team notes for the "Think with your team" prompts; never required to submit.
+export const noteFields = ['predictEasyNote','predictHardNote','surpriseNote','riskNote'];
+export const noteLimit = 300;
+export const writableFields = [...textFields, 'civName', ...noteFields];
+export const fieldLimit = key => key === 'civName' ? 40 : noteFields.includes(key) ? noteLimit : 1200;
+// Before seeing the regional prices, a team may mark each development as it expects.
+export const predictionMarks = ['easy','normal','hard'];
+export const reflectionFields = ['historyDifferenceAnswer','historyWorkAnswer','historyOmissionAnswer'];
+export const reflectionLimit = 1200;
+const initialReflection = () => ({ ...Object.fromEntries(reflectionFields.map(key => [key,''])), submittedAt:null });
+const validDie = value => Number.isInteger(value) && value >= 1 && value <= 6;
+export const eventId = event => event?.id !== undefined ? Number.isInteger(event.id) && event.id >= 1 && event.id <= 12 ? event.id : null : validDie(event?.roll) ? event.roll : null;
 // Each answer about government, economy and beliefs also needs a choice from its list.
 export const chipOptions = {
   government:['elders','council','ruler','priests','assembly'],
   economy:['farming','herding','fishing','hunting','trade','crafts','irrigation','markets'],
-  beliefs:['nature','ancestors','gods','sky','one','mystics','organized']
+  beliefs:['ancestors','animals','river','sea','mountains','sky','gods','one','other']
 };
 export const economyMax = 3;
 // Ordinary subsistence, local leadership and spirituality are possible without a
@@ -24,7 +34,7 @@ export const economyMax = 3;
 export const optionRequirements = {
   government:{ elders:[], council:[], ruler:['empire','workforce'], priests:['mysticism'], assembly:['philosophy'] },
   economy:{ farming:[], herding:['husbandry'], fishing:[], hunting:[], trade:['trade'], crafts:['craft'], irrigation:['irrigation'], markets:['currency'] },
-  beliefs:{ nature:[], ancestors:[], gods:[], sky:[], one:[], mystics:['mysticism'], organized:['theology'] }
+  beliefs:{ ancestors:[], animals:[], river:[], sea:[], mountains:[], sky:[], gods:[], one:[], other:[] }
 };
 
 // Join codes are the team's short name and a three-digit PIN, read aloud as "A-427".
@@ -80,13 +90,14 @@ export const errorText = {
   placeLocked:'Your team has already started building here.',
   badAction:'This action is not possible.',
   noRoll:'This card does not need a roll.',
-  badDie:'The die gave an invalid number.'
+  badDie:'The die gave an invalid number.',
+  reflectionSubmitted:'Your historical reflection has already been submitted.'
 };
 function fail(code, status = 400) { return Object.assign(new Error(errorText[code] || code), { code, status }); }
 
 // ---- State --------------------------------------------------------------------------
 export function initialState() {
-  return { v:2, mapPoint:'', tech:[], civic:[], rolls:{}, event:null, civName:'', government:'', economy:[], beliefs:'', ...Object.fromEntries(textFields.map(key => [key,''])) };
+  return { v:2, mapPoint:'', tech:[], civic:[], rolls:{}, event:null, civName:'', government:'', economy:[], beliefs:'', ...Object.fromEntries([...textFields, ...noteFields].map(key => [key,''])), predictions:{}, reflection:initialReflection() };
 }
 const cardIn = (tree, id) => trees[tree].some(card => card.id === id);
 // Remove cards missing any required parent, until nothing changes.
@@ -119,21 +130,34 @@ export function normalizeState(raw) {
     if (Object.hasOwn(cardById, id) && Number.isInteger(value) && value >= 1 && value <= 6) state.rolls[id] = value;
   }
   const event = src.event;
-  if (!old && event && typeof event === 'object' && Number.isInteger(event.roll) && event.roll >= 1 && event.roll <= 6) {
+  if (!old && event && typeof event === 'object') {
+    const id = eventId(event);
+    const dice = Array.isArray(event.dice) ? [...event.dice] : event.id === undefined && validDie(event.roll) ? [event.roll] : [];
+    const validEvent = dice.length === 2 ? dice.every(validDie) && id === dice[0] + (dice[1] > 3 ? 6 : 0) : dice.length === 1 && validDie(dice[0]) && id === dice[0];
     const ids = list => [...new Set((Array.isArray(list) ? list : []).filter(id => typeof id === 'string' && Object.hasOwn(cardById, id)))];
-    state.event = { roll:event.roll, choice:['trade','fight'].includes(event.choice) ? event.choice : '', lost:ids(event.lost), gained:ids(event.gained).filter(id => state[treeOf(id)].includes(id)) };
+    if (validEvent) state.event = { id, dice, choice:id === 3 && ['trade','fight'].includes(event.choice) ? event.choice : '', lost:ids(event.lost), gained:ids(event.gained).filter(id => state[treeOf(id)].includes(id)) };
   }
   for (const key of writableFields) if (typeof src[key] === 'string') state[key] = src[key].replace(/\r/g,'').slice(0, fieldLimit(key));
+  for (const [id, mark] of Object.entries(src.predictions && typeof src.predictions === 'object' ? src.predictions : {})) {
+    if (Object.hasOwn(cardById, id) && predictionMarks.includes(mark)) state.predictions[id] = mark;
+  }
   if (chipOptions.government.includes(src.government)) state.government = src.government;
   if (chipOptions.beliefs.includes(src.beliefs)) state.beliefs = src.beliefs;
   if (Array.isArray(src.economy)) state.economy = [...new Set(src.economy.filter(value => chipOptions.economy.includes(value)))].slice(0, economyMax);
+  const reflection = src.reflection;
+  if (reflection && typeof reflection === 'object') {
+    for (const key of reflectionFields) if (typeof reflection[key] === 'string') state.reflection[key] = reflection[key].replace(/\r/g,'').slice(0, reflectionLimit);
+    if (typeof reflection.submittedAt === 'string' && Number.isFinite(Date.parse(reflection.submittedAt))) state.reflection.submittedAt = reflection.submittedAt;
+  }
   const legacy = {};
   if (old) {
     for (const key of legacyKeys) if (typeof src[key] === 'string' && src[key].trim()) legacy[key] = src[key].slice(0, 600);
     for (const key of ['origin','encounter']) if (typeof src.events?.[key] === 'string' && src.events[key].trim()) legacy[key] = src.events[key].slice(0, 600);
   } else if (src.legacy && typeof src.legacy === 'object') {
-    for (const [key, value] of Object.entries(src.legacy)) if ([...legacyKeys,'origin','encounter'].includes(key) && typeof value === 'string') legacy[key] = value.slice(0, 600);
+    for (const [key, value] of Object.entries(src.legacy)) if ([...legacyKeys,'origin','encounter','beliefs'].includes(key) && typeof value === 'string') legacy[key] = value.slice(0, 600);
   }
+  // Retired belief options stay visible to the teacher; the team chooses again.
+  if (['nature','mystics','organized'].includes(src.beliefs)) legacy.beliefs = src.beliefs;
   if (Object.keys(legacy).length) state.legacy = legacy;
   return state;
 }
@@ -226,9 +250,9 @@ export function eventPlan(state) {
   const pre = { tech:before(state,'tech'), civic:before(state,'civic') };
   const hadCard = id => pre.tech.includes(id) || pre.civic.includes(id);
   const works = id => working(state, [...pre.tech, ...pre.civic], id);
-  const base = { roll:event.roll, protectedBy:'', count:0, remaining:0, options:[] };
+  const base = { id:eventId(event), protectedBy:'', count:0, remaining:0, options:[] };
   let need = null;
-  switch (event.roll) {
+  switch (base.id) {
     case 1: if (hadCard('irrigation') && works('masonry')) base.protectedBy = 'masonry'; break;
     case 2: if (works('construction')) base.protectedBy = 'construction'; else need = { kind:'lose', trees:['tech'], count:1 }; break;
     case 3:
@@ -240,14 +264,24 @@ export function eventPlan(state) {
     case 4: need = { kind:'lose', trees:['civic'], count:hadCard('trade') ? 2 : 1 }; break;
     case 5: if (works('trade')) base.protectedBy = 'trade'; else need = { kind:'lose', trees:['tech'], count:1 }; break;
     case 6: need = { kind:'gain', line:'any', count:1 }; break;
+    case 7: if (works('engineering')) base.protectedBy = 'engineering'; else need = { kind:'lose', trees:['tech'], count:1 }; break;
+    case 8:
+      if (works('sailing')) base.protectedBy = 'sailing';
+      else if (works('horseback')) base.protectedBy = 'horseback';
+      else need = { kind:'lose', trees:['civic'], line:'trade', count:1 };
+      break;
+    case 9: if (works('philosophy')) base.protectedBy = 'philosophy'; else need = { kind:'lose', trees:['civic'], count:1 }; break;
+    case 10: need = { kind:'gain', line:'any', trees:['tech'], count:1 }; break;
+    case 11: need = { kind:'gain', line:'any', trees:['civic'], count:1 }; break;
+    case 12: need = { kind:'gain', line:'any', count:1 }; break;
   }
   if (!need) return { ...base, kind:'none', resolved:true };
   if (need.kind === 'lose') {
-    const options = need.trees.flatMap(tree => removable(state, tree).map(id => ({ tree, id })));
+    const options = need.trees.flatMap(tree => removable(state, tree).filter(id => need.line !== 'trade' || tradeLine.includes(id)).map(id => ({ tree, id })));
     const remaining = options.length ? Math.max(0, need.count - event.lost.length) : 0;
     return { ...base, kind:'lose', trees:need.trees, count:need.count, remaining, options, resolved:remaining === 0 };
   }
-  const options = gainable(state, need.line);
+  const options = gainable(state, need.line).filter(option => !need.trees || need.trees.includes(option.tree));
   const remaining = options.length ? Math.max(0, need.count - event.gained.length) : 0;
   return { ...base, kind:'gain', line:need.line, count:need.count, remaining, options, resolved:remaining === 0 };
 }
@@ -304,16 +338,17 @@ export function applyAction(previous, action, { rollDie } = {}) {
     if (treeIssues(state).length) throw fail('fixTrees');
     const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && b.every(id => a.includes(id));
     if (!sameSet(action.confirm?.tech, state.tech) || !sameSet(action.confirm?.civic, state.civic)) throw fail('treesChanged', 409);
-    state.event = { roll:die(), choice:'', lost:[], gained:[] };
+    const dice = [die(), die()];
+    state.event = { id:dice[0] + (dice[1] > 3 ? 6 : 0), dice, choice:'', lost:[], gained:[] };
     // Drought: Irrigation is lost at once, unless working Masonry built reservoirs.
-    if (state.event.roll === 1 && state.tech.includes('irrigation') && !working(state, state.tech, 'masonry')) {
+    if (state.event.id === 1 && state.tech.includes('irrigation') && !working(state, state.tech, 'masonry')) {
       const gone = cascadeOf(state, 'tech', 'irrigation');
       state.tech = state.tech.filter(id => !gone.includes(id));
       state.event.lost.push(...gone);
     }
   } else if (type === 'eventChoice') {
     if (!state.event) throw fail('noEvent');
-    if (state.event.roll !== 3) throw fail('badAction');
+    if (state.event.id !== 3) throw fail('badAction');
     if (!['trade','fight'].includes(action.choice)) throw fail('wrongChoice');
     if (state.event.choice) throw fail('choiceMade', 409);
     state.event.choice = action.choice;
@@ -335,6 +370,16 @@ export function applyAction(previous, action, { rollDie } = {}) {
       state[action.tree].push(action.id);
       state.event.gained.push(action.id);
     }
+  } else if (type === 'reflectionAnswer') {
+    if (state.reflection.submittedAt) throw fail('reflectionSubmitted', 409);
+    if (!reflectionFields.includes(action.key) || typeof action.value !== 'string') throw fail('badField');
+    if (action.value.length > reflectionLimit) throw fail('tooLong');
+    state.reflection[action.key] = action.value.replace(/\r/g,'');
+  } else if (type === 'predict') {
+    if (!Object.hasOwn(cardById, action.id)) throw fail('unknownCard');
+    if (action.mark === '') delete state.predictions[action.id];
+    else if (predictionMarks.includes(action.mark)) state.predictions[action.id] = action.mark;
+    else throw fail('badAction');
   } else if (type === 'field') {
     if (!writableFields.includes(action.key) || typeof action.value !== 'string') throw fail('badField');
     if (action.value.length > fieldLimit(action.key)) throw fail('tooLong');
@@ -375,7 +420,7 @@ export function needsDie(state, action) {
   return false;
 }
 
-// Required before the team can submit. The civilization name is optional.
+// Required before the team can submit. Historical reflection is a later submission.
 export function submissionGaps(raw) {
   const state = normalizeState(raw);
   const gaps = [];
@@ -385,6 +430,7 @@ export function submissionGaps(raw) {
     if (!state.civic.length) gaps.push('civic');
     gaps.push('event');
   } else if (!eventPlan(state).resolved) gaps.push('eventResolved');
+  if (!state.civName.trim()) gaps.push('civName');
   for (const key of textFields) {
     if (key === 'governmentAnswer' && !choicesValid(state,'government')) gaps.push('government');
     if (key === 'economyAnswer' && !choicesValid(state,'economy')) gaps.push('economy');
@@ -392,4 +438,9 @@ export function submissionGaps(raw) {
     if (!state[key].trim()) gaps.push(key);
   }
   return gaps;
+}
+
+export function reflectionGaps(raw) {
+  const reflection = normalizeState(raw).reflection;
+  return reflectionFields.filter(key => !reflection[key].trim());
 }

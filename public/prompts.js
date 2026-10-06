@@ -7,6 +7,11 @@ import { dictionary } from '../shared/i18n.js';
 const plain = text => String(text ?? '').replace(/\[\[[a-z]+\|([^\]]+)\]\]/g,'$1').replace(/\[\[([a-z]+)\]\]/g,'$1').replace(/\{([^{}|]+)\|[^{}]+\}/g,'$1');
 const name = (id, lang) => id ? plain(cardById[id]?.[lang] ?? id) : '…';
 
+export const eventPromptKind = state => {
+  const id = state.event?.id ?? state.event?.roll;
+  return [6,10,11,12].includes(id) ? 'opportunity' : id === 3 ? 'choice' : 'adverse';
+};
+
 export function starters(key, state, lang) {
   const ja = lang === 'ja', L = dictionary[lang], region = regions[state.mapPoint];
   if (!region) return [];
@@ -16,79 +21,125 @@ export function starters(key, state, lang) {
   const chip = (group, value) => value ? plain(L[`chips_${group}`][value] ?? value) : '…';
   switch (key) {
     case 'eventAnswer': {
-      const title = state.event ? plain(L[`event${state.event.roll}`]) : (ja ? 'イベント' : 'the event');
-      return ja ? [
-        `${title}への対応について、私たちの主張は…ということです。根拠は…です。`,
-        '私たちのカードのうち、…と…が結果につながったしくみは…です。',
-        '負担が大きかったのは…という集団です。別の対応なら…'
+      const title = state.event ? plain(L[`event${state.event.id ?? state.event.roll}`]) : (ja ? 'イベント' : 'the event');
+      const kind = eventPromptKind(state);
+      if (kind === 'opportunity') return ja ? [
+        `${title}によって、…という機会が生まれました。`,
+        '…と…という発達が、…という方法で役立ちます。',
+        '最も利益を得るのは…です。ただし、…という問題は残ります。'
       ] : [
-        `Our claim about our response to ${title} is …; the evidence is …`,
-        'Two of our cards, … and …, affected the result through …',
-        'The burden fell especially on …; a different response would …'
+        `${title} created an opportunity to …`,
+        'Our developments … and … could help by …',
+        'The people who benefit most are …; however, … remains a problem.'
+      ];
+      if (kind === 'choice') return ja ? [
+        '私たちは…という対応を選びました。理由は…です。',
+        '…と…という発達が、判断を…という方法で支えました。',
+        '利点は…で、リスクは…です。新しく来た人々には…と見えるかもしれません。'
+      ] : [
+        'We chose to … because …',
+        'Our developments … and … supported this choice by …',
+        'One benefit is … and one risk is …; the newcomers might see our response as …'
+      ];
+      return ja ? [
+        `${title}は、社会の…に影響しました。`,
+        '…と…という発達は、…という方法で役立ちました。または、役立たなかった理由は…です。',
+        '最も困難を受けたのは…です。…という問題が残ります。'
+      ] : [
+        `${title} affected our society by …`,
+        'Our developments … and … helped by …, or offered little protection because …',
+        'The greatest difficulty fell on …; one remaining problem is …'
       ];
     }
     case 'geographyAnswer': return ja ? [
-      `${place}では、…という制約が最も重要でした。なぜなら…`,
-      `資源の…が${science}の利用に影響し、それが制度の…に影響しました。`,
-      '同じ条件でも、…という選択が可能でした。違いを生むのは…'
+      `${place}の…という特徴が、${science}の選択に影響しました。`,
+      'この特徴のため、人々は…ができました。または、…ができませんでした。',
+      'この特徴は、…という点で利点であり、…という点で制約です。'
     ] : [
-      `In ${place}, the most important constraint was …, because …`,
-      `The resource … shaped our use of ${science}, which affected the institution … through …`,
-      'Under the same conditions, an alternative was …; the difference would come from …'
+      `The feature … in ${place} shaped our choice of ${science} because …`,
+      'Because of this feature, people could … or could not …',
+      'It was an advantage because …, and a limit because …'
     ];
     case 'governmentAnswer': {
       const government = chip('government', state.government);
       return ja ? [
-        `${government}を選ぶ根拠は、私たちのカードの…と…です。具体的には…`,
-        '協力を調整するには…が必要です。しかし、権限を持たない…は…',
-        '権力の乱用を抑える方法は…です。それにも…という限界があります。'
+        `${government}は、…という仕事をまとめるのに合っています。`,
+        '決定するのは…です。…の意見は反映されにくいかもしれません。',
+        '不公平な決定には、…という方法で異議を唱えられます。'
       ] : [
-        `Two of our cards, … and …, make ${government} workable because …`,
-        'The coordination problem is …; people without authority may …',
-        'We would constrain abuses through …, although that safeguard could fail when …'
+        `${government} suits us because it can organize …`,
+        'Decisions are made by …, while … may have little influence.',
+        'People could challenge an unfair decision by …'
       ];
     }
     case 'economyAnswer': {
       const activities = state.economy.map(value => chip('economy', value)).join(ja ? '・' : ', ') || '…';
       return ja ? [
-        `${activities}の優先順位について、私たちの主張は…です。資源とカードの根拠は…`,
-        '…を優先すると、…の利益は増えますが、…の負担も増えます。',
-        'イベントの結果は、この選択の…という弱点を示しました。'
+        `${activities}の中では、…を…より優先します。資源と発達が示す理由は…です。`,
+        '利益を得るのは…で、リスクを負うのは…です。',
+        'イベントは、…の重要性を示しました。後回しになる有用な別案は…です。'
       ] : [
-        `Our priorities among ${activities} are …; resource and card evidence supports this because …`,
-        'Prioritizing … benefits … but places the cost on …',
-        'The event result exposed a vulnerability in this choice: …'
+        `Among ${activities}, we prioritize … over … because our resources and developments …`,
+        'This benefits …, while … carries the risk of …',
+        'The event showed …; a useful alternative receiving less attention is …'
       ];
     }
     case 'beliefAnswer': {
-      const beliefs = chip('beliefs', state.beliefs);
+      const beliefs = state.beliefs === 'other' ? (ja ? '私たちの信仰' : 'Our belief') : chip('beliefs', state.beliefs);
       return ja ? [
-        `${beliefs}が協力に関わるしくみは…です。地域の…と${society}が根拠になります。`,
-        '人々が自発的に共有する意味は…ですが、強制になりうるのは…です。',
-        '別の集団にとって、この制度は…という意味を持つかもしれません。'
+        `${beliefs}：人々は…を聖なるものと考えます。`,
+        '毎年…に、…で…という儀式を行い、…が導きます。',
+        'この儀式は…を結びつけます。異なる考えを持つ人は…と扱われるかもしれません。'
       ] : [
-        `${beliefs} could affect cooperation through …; our local condition … and ${society} support this argument.`,
-        'A shared meaning people might accept is …; coercion could arise when …',
-        'For another group, the same institution might mean …'
+        `${beliefs}: our people treat … as sacred.`,
+        'Every … at …, people hold a ritual where …; it is led by …',
+        'The ritual brings together …; people who disagree might be treated …'
       ];
     }
     case 'shapeAnswer': return ja ? [
-      `${science}と${society}の関係について、私たちは…と主張します。`,
-      '…から…へつながるしくみは…です。',
-      '…という集団には、…という意図しない影響がありえます。この主張の限界は…'
+      '…という人々の一日は、…から始まります。',
+      `${science}は…という点で暮らしを楽にします。`,
+      `しかし、${society}のために、…という負担があります。`
     ] : [
-      `We argue that ${science} and ${society} interact by …`,
-      'The causal steps connecting … to … are …',
-      'An unintended consequence for … could be …; our argument is limited by …'
+      'A day for … begins with …',
+      `${science} makes their life easier because …`,
+      `However, ${society} makes it harder because …`
     ];
     case 'notChosenAnswer': return ja ? [
-      '実現可能だった別案は…です。選ばなかった理由は、…との比較で…',
-      '選択によって失った利益は…であり、だれがそれを必要としたかというと…',
-      'もし…という条件が変われば、私たちは決定を変えます。なぜなら…'
+      '…は選べましたが、…を優先しました。理由は…です。',
+      '私たちは…を得ましたが、別案で得られた…をあきらめました。',
+      'もし…という状況が変われば、…を選び直します。理由は…です。'
     ] : [
-      'A feasible alternative was …; we rejected it in comparison with … because …',
-      'The benefit we gave up was …, which mattered particularly to …',
-      'If … changed, we would reverse our decision because …'
+      'We could have chosen …, but preferred … because …',
+      'We gained …, while giving up the alternative benefit of …',
+      'If … changed, we would reconsider because …'
+    ];
+    case 'historyDifferenceAnswer': return ja ? [
+      'チームは…を選びましたが、歴史の例では…が説明されています。',
+      '文章の…という証拠から、違いの理由は…と考えられます。',
+      '地理だけでなく、…という関係や選択も重要でした。'
+    ] : [
+      'Our team chose …, while the historical example describes …',
+      'The evidence … in the reading suggests one reason for the difference: …',
+      'Alongside geography, the relationship or choice … mattered because …'
+    ];
+    case 'historyWorkAnswer': return ja ? [
+      '歴史の…という事業や実践を選びます。',
+      '材料の…、知識の…、労働の…が必要でした。',
+      '人々は…について協力する必要があり、…という課題に直面しました。'
+    ] : [
+      'The historical project or practice we chose is …',
+      'It required the materials …, the knowledge …, and the work of …',
+      'People needed to cooperate over …; one challenge was …'
+    ];
+    case 'historyOmissionAnswer': return ja ? [
+      '歴史の文章にある…という要素を、活動は表していません。',
+      'その要素を取り入れると、…という決定に影響します。',
+      '私たちは…を変えるでしょう。理由は…です。'
+    ] : [
+      'The historical aspect … appears in the reading but is not represented in this activity.',
+      'Including it would affect our decision about …',
+      'We would change … because …'
     ];
   }
   return [];
