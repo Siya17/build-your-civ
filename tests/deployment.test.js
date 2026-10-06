@@ -2,7 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import api from '../api/index.js';
+
+test('Firebase server imports and signing-key conversion work without require(ESM)',()=>{
+  // Vercel's loader rejects require(ESM), even though ordinary Node 24 allows it.
+  // Exercise the real dependency chain and RSA conversion without cloud credentials.
+  execFileSync(process.execPath,['--no-experimental-require-module','--input-type=module','-e',`
+    import assert from 'node:assert/strict';
+    import { generateKeyPairSync, sign, verify } from 'node:crypto';
+    import jwks from 'jwks-rsa';
+    import './server/firebase.js';
+    const {publicKey,privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+    const jwk={...publicKey.export({format:'jwk'}),kid:'test-key',alg:'RS256',use:'sig'};
+    const client=jwks({fetcher:async()=>({keys:[jwk]}),cache:false,rateLimit:false});
+    const key=await client.getSigningKey('test-key');
+    const data=Buffer.from('classroom startup regression');
+    assert.equal(verify('RSA-SHA256',data,key.getPublicKey(),sign('RSA-SHA256',data,privateKey)),true);
+  `],{cwd:new URL('../',import.meta.url),stdio:'pipe',timeout:30000});
+});
 
 const appSource = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const apiSource = appSource.slice(appSource.indexOf('async function api('), appSource.indexOf('// ---- Reading screens'));

@@ -131,6 +131,8 @@ This means the browser expected structured app data, but received ordinary text 
 
 Startup errors caught by the API return JSON with HTTP 503 and a setup message. Hosting failures that happen before the function runs can still return plain text or HTML; the browser handles those without exposing the raw response.
 
+If Runtime Logs mention `ERR_REQUIRE_ESM`, `jwks-rsa`, and `jose`, deploy the latest code with both `package.json` and `package-lock.json`. The project overrides only `jwks-rsa`'s `jose` dependency to version `5.10.0`, which supports CommonJS loading. This avoids a Firebase Admin startup failure in Vercel's module loader. The deployment test reproduces that loader restriction and verifies RSA signing-key conversion. This particular error happens before Firebase settings are checked.
+
 | What you see | What to check |
 | --- | --- |
 | `/api/health` returns 503 and a setup message | Check the Vercel Runtime Logs for the initialization error. Verify variables, JSON, credentials, and Firestore setup. |
