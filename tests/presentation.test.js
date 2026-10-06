@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, normalizeState, applyAction, reflectionFields } from '../shared/game.js';
+import { initialState, normalizeState, applyAction, reflectionFields, markQuota } from '../shared/game.js';
 import { trees } from '../shared/cards.js';
 import { dictionary } from '../shared/i18n.js';
 import { glossary } from '../shared/glossary.js';
@@ -9,7 +9,7 @@ import { studentPage } from '../public/screens.js';
 import { teacherPage, teacherDetailView, posterOverlay } from '../public/teacher.js';
 import { posterMarkup } from '../public/poster.js';
 import { printablePosters } from '../public/printing.js';
-import { plain, rich } from '../public/ui.js';
+import { plain, rich, fmt } from '../public/ui.js';
 import { eventPromptKind } from '../public/prompts.js';
 
 const base = normalizeState({...initialState(), mapPoint:'G', fixedPoint:'G', tech:['pottery'], civic:['laws']});
@@ -206,6 +206,21 @@ test('typed historical work is visible and escaped in teacher review, poster and
       assert.doesNotMatch(html,/<script>/);
     }
   }
+});
+
+test('a team may place exactly as many easy and difficult marks as its region rates', () => {
+  const quota = markQuota(base.mapPoint), ids = [...trees.tech, ...trees.civic].map(card => card.id);
+  assert(quota.easy > 0 && quota.hard > 0);
+  let state = base;
+  for (const id of ids.slice(0, quota.easy)) state = applyAction(state, { type:'predict', id, mark:'easy' });
+  assert.throws(() => applyAction(state, { type:'predict', id:ids[quota.easy], mark:'easy' }), /markLimit|used all/);
+  // Switching a marked development to the other kind, or clearing it, frees the mark.
+  state = applyAction(state, { type:'predict', id:ids[0], mark:'' });
+  state = applyAction(state, { type:'predict', id:ids[quota.easy], mark:'easy' });
+  assert.equal(Object.values(state.predictions).filter(mark => mark === 'easy').length, quota.easy);
+  const page = studentPage(context('challenge', state, 'en'));
+  assert(visibleText(page).includes(fmt(dictionary.en.markQuota, quota.easy, quota.hard)));
+  assert.match(page, new RegExp(`${quota.easy}/${quota.easy}`));
 });
 
 test('every development starts as normal; teams mark only easy or difficult ones, then compare with the ratings', () => {

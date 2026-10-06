@@ -42,6 +42,7 @@ export async function connectFirebase(stream,setup) {
       clearTimeout(expiryTimer);expiryTimer=setTimeout(()=>stream.emit('revoked',{}),Math.max(0,snap.data().expiresAt-Date.now()));
     });
     listen(doc(db,base+'/settings/reveal'),snap=>stream.emit('reveal',{reveal:!!snap.data()?.reveal}));
+    listen(doc(db,base+'/settings/lesson'),snap=>stream.emit('lesson',{lessonVersion:snap.data()?.lessonVersion === 'short' ? 'short' : 'full',lessonLocked:!!snap.data()?.lessonLocked}));
     if(setup.role==='teacher')listen(query(collection(db,base+'/teams'),orderBy('id')),snap=>stream.emit('teams',{teams:snap.docs.map(doc=>rowTeam(doc.data()))}));
     else {
       listen(doc(db,base+'/teams/'+setup.teamId),snap=>{

@@ -140,6 +140,7 @@ const en = {
   activityHelp:'Answers and choices saved by each student.', actionsCount:'saved', noActivity:'Nothing saved yet', reopen:'Let the team edit again',
   print:'Print', deleteWarning:'Delete this team and all of its work? You cannot undo this.', reopenWarning:'Let this team edit again?',
   codeWarning:'The old code will stop working. Continue?', deleted:'Team deleted', lettersAdded:'Added %s teams', homelandFixed:'Place',
+  selectAll:'Select all', pickTeam:'Select %s', deleteSelected:'Delete selected (%s)', deleteManyWarning:'Delete %s teams and all of their work? You cannot undo this.', deletedMany:'Deleted %s teams',
   revealPanel:'What really happened', revealClosedNote:'Closed. Students see a waiting screen after they submit.', revealOpenTeacher:'Open. Students can see the real history.',
   openReveal:'Open for all teams', closeReveal:'Close again', showPoster:'Show poster', nowAt:'Now at', eventLabel:'Event', notRolled:'not rolled yet',
   legacyTitle:'Answers from the earlier version of the game', answersTitle:'Answers', cardsTitle:'Cards', choicesTitle:'Choices',
@@ -274,6 +275,7 @@ const ja = {
   activityHelp:'各学生が保存した回答と選択の数。', actionsCount:'件', noActivity:'まだ保存がありません', reopen:'もう一度編集できるようにする',
   print:'印刷', deleteWarning:'このチームとすべての作業を削除しますか？ 取り消せません。', reopenWarning:'このチームが、もう一度編集できるようにしますか？',
   codeWarning:'以前のコードは使えなくなります。続けますか？', deleted:'チームを削除しました', lettersAdded:'%sチームを追加しました', homelandFixed:'場所',
+  selectAll:'すべて選択', pickTeam:'%sを選択', deleteSelected:'選択したチームを削除（%s）', deleteManyWarning:'%sチームとすべての作業を削除しますか？ 取り消せません。', deletedMany:'%sチームを削除しました',
   revealPanel:'実際に起きたこと', revealClosedNote:'閉じています。学生は提出後、待ち画面を見ます。', revealOpenTeacher:'開いています。学生は本当の歴史を見られます。',
   openReveal:'全チームに開く', closeReveal:'閉じる', showPoster:'ポスターを表示', nowAt:'現在', eventLabel:'イベント', notRolled:'まだふっていない',
   legacyTitle:'前のバージョンのゲームでの回答', answersTitle:'回答', cardsTitle:'カード', choicesTitle:'選択',
@@ -312,8 +314,10 @@ Object.assign(en, {
   thinkSurprise:'Which suitability judgment differs from your prediction? Explain using evidence about the region.',
   thinkRisk:'Which difficult development could still help your society? Explain its benefit and the difficulty people would need to overcome.',
   previewTitle:'Explore both development trees', previewLead:'Point at a development, or focus it, to see a short definition. Click it to read the full explanation. You will choose after analyzing your region.',
+  previewWhy:['You now know your region’s land, climate, and resources. Next, see what your people could develop there.', 'Technologies are tools and skills, such as Pottery or Irrigation. Cultural developments are ways of living together, such as Code of Laws or Foreign Trade.', 'Look at both trees now. Soon you will predict which developments your region makes easy or difficult. Later, you will build your society from both trees.'],
   previewTechTitle:'Technologies to consider', previewCivicTitle:'Cultural developments to consider',
-  markTitle:'Predict with your team', markLead:'Before you see this activity’s regional ratings, predict what your region makes easy or difficult. Every development starts as normal. Choose a marker, then tap only the developments you expect to be easy or difficult. Teammates see your marks at once.',
+  markTitle:'Predict with your team', markLead:'Before you see this activity’s regional ratings, predict which developments your region makes easy or difficult. Look at both trees. Every development starts as normal. Choose a marker, then tap developments. Teammates see your marks at once.',
+  markQuota:'In your region, %s developments are easy and %s are difficult. Use exactly that many marks of each kind.',
   markTools:'Choose a marker', markHint:'Tap a development again with the same marker to set it back to normal.',
   mark_easy:'Easy here', mark_normal:'Normal', mark_hard:'Difficult here', markedAs:'Your team’s prediction: %s',
   predictEasyNote:'Prediction: an easy development', predictHardNote:'Prediction: a difficult development', surpriseNote:'A surprising rating', riskNote:'A difficult development worth trying',
@@ -423,8 +427,10 @@ Object.assign(ja, {
   thinkSurprise:'どの判断が、チームの予想と違いましたか？ 地域の証拠を使って説明してください。',
   thinkRisk:'難しくても、社会に役立ちそうな発達はどれですか？ 利点と、克服する必要がある難しさを説明してください。',
   previewTitle:'両方の発達ツリーを先に見る',previewLead:'発達にカーソルを合わせると、短い説明が出ます。クリックすると、詳しい説明を読めます。地域を分析した後に選びます。',
+  previewWhy:['地域の土地・気候・資源がわかりました。次に、そこで人々が何を発達させられるかを見てみましょう。','技術は道具や技能です（例：陶器、灌漑）。文化の発達は、ともに暮らすためのしくみです（例：法律の成文化、外国貿易）。','今、両方のツリーを見ておきましょう。このあと、地域でどの発達が簡単または難しくなるかを予想します。その後、両方のツリーから社会を作ります。'],
   previewTechTitle:'科学技術の選択肢',previewCivicTitle:'文化の発達の選択肢',
-  markTitle:'チームで予想しよう',markLead:'この活動の地域の評価を見る前に、この地域で何が簡単になり、何が難しくなるかを予想しましょう。すべての発達は最初は「ふつう」です。印の種類を選んでから、簡単または難しいと思う発達だけをタップします。チームの仲間にもすぐに表示されます。',
+  markTitle:'チームで予想しよう',markLead:'この活動の地域の評価を見る前に、この地域で何が簡単になり、何が難しくなるかを予想しましょう。両方のツリーを見てください。すべての発達は最初は「ふつう」です。印の種類を選んでから、発達をタップします。チームの仲間にもすぐに表示されます。',
+  markQuota:'あなたの地域では、「簡単」な発達が%s個、「難しい」発達が%s個あります。それぞれちょうどその数だけ印を付けましょう。',
   markTools:'印の種類を選ぶ',markHint:'同じ印でもう一度タップすると、「ふつう」に戻ります。',
   mark_easy:'ここでは簡単',mark_normal:'ふつう',mark_hard:'ここでは難しい',markedAs:'チームの予想：%s',
   predictEasyNote:'予想：簡単な発達',predictHardNote:'予想：難しい発達',surpriseNote:'意外だった評価',riskNote:'難しくても挑戦する価値がある発達',
@@ -483,6 +489,50 @@ Object.assign(ja, {
   ]
 });
 ja.errors.reflectionSubmitted = '歴史の振り返りは提出済みです。修正が必要なら先生に再開してもらってください。';
+ja.errors.markLimit = 'この印はすべて使いました。印の付いた発達をタップすると、1つ空きます。';
+
+Object.assign(en, {
+  lessonShortWelcome:['Your team will build a model society in a real region. Study its environment before choosing developments.','Explain how your choices work together, who benefits, and what difficulties people face.','Present your civilization, then discuss your choices with the whole class.'],
+  lessonShortEnd:'Your written work is complete. After presenting, discuss these questions together as a class.',
+  lessonDiscussion:['Which regional feature most influenced your choices?','What did you gain and give up by choosing these developments?','Who benefited from your response to the event, and who faced difficulties?'],
+  lessonShortIntro:['Investigate your region’s geography, climate, and resources.','Explore both development trees, predict local suitability, and choose your developments.','Roll two dice, resolve the event, and write four short explanations.','Present for 2–3 minutes, then discuss your choices together as a class.'],
+  lessonTitle:'Activity version', lessonFull:'Full activity', lessonShort:'90-minute activity',
+  lessonFullDescription:'Seven explanations, three written historical reflections, and three-minute talks.',
+  lessonShortDescription:'Four short explanations, 2–3 minute class talks, and discussion of your choices together as a class.',
+  lessonChoose:'Choose for the whole class before teams start working.', lessonLocked:'The version is locked because team work has started.',
+  lessonShortAnswer:'Write 2–3 sentences. Answer directly and use specific examples.',
+  lessonShortBeliefs:'Choose what your people hold sacred. Describe it briefly if you choose Another belief.',
+  lessonCustomBelief:'Briefly describe what your people hold sacred.',
+  lessonOverview:'Explore your region', lessonOptional:'Optional: explore developments and predict their suitability',
+  lessonDetails:'Regional details', lessonSchedule:'90-minute teaching schedule',
+  lessonScheduleLabels:['Join and explain rules','Regional overview, development exploration and predictions','Build both trees','Resolve event','Four explanations and submit','Whole-class presentations','Class discussion of your choices'],
+  lessonMinutes:'%s minutes', lessonPacing:'For 7–8 teams. Keep answers concise and presentation transitions brief. Timing is guidance, not a time limit.',
+  lessonShortTalk:'Use your poster for a 2–3 minute talk to the class.',
+  lessonShortWait:['Each team has 2–3 minutes to present to the class.','Use your poster to explain your choices and the event.','After the presentations, discuss your choices together as a class.'],
+  classDiscussionTitle:'Discuss history together', classDiscussionLead:'Discuss these questions with the whole class. No written reflection or further submission is required.',
+  classDiscussionDone:'Finish activity', lessonComplete:'Activity complete', reflectionDisabled:'Historical reflection is a whole-class discussion in this version.'
+});
+Object.assign(ja, {
+  lessonShortWelcome:['実際の地域で暮らす社会を作ります。発達を選ぶ前に、その環境を調べましょう。','選択がどうつながり、だれが利益を得て、どんな困難が生じるかを説明しましょう。','文明を発表した後、選択についてクラス全体で話し合います。'],
+  lessonShortEnd:'記入と提出は完了です。発表後、次の問いをクラス全体で話し合いましょう。',
+  lessonDiscussion:['どの地域の特徴が、選択に最も影響しましたか？','発達を選ぶことで、何を得て、何をあきらめましたか？','イベントへの対応で、だれが利益を得て、だれが困難に直面しましたか？'],
+  lessonShortIntro:['地域の地理・気候・資源を調べる。','両方のツリーを調べ、地域への適合性を予想し、発達を選ぶ。','二つのサイコロでイベントを決めて対応し、4つの短い説明を書く。','2〜3分間で発表し、選択についてクラス全体で話し合う。'],
+  lessonTitle:'活動のバージョン', lessonFull:'フル版', lessonShort:'90分版',
+  lessonFullDescription:'7つの説明、3つの歴史の振り返り、3分間の発表を行います。',
+  lessonShortDescription:'4つの短い説明、2〜3分間の発表、選択についてクラス全体で話し合います。',
+  lessonChoose:'チームが作業を始める前に、クラス全体のバージョンを選んでください。', lessonLocked:'チームの作業が始まったため、バージョンは変更できません。',
+  lessonShortAnswer:'2〜3文で答えてください。問いに直接答え、具体的な例を挙げましょう。',
+  lessonShortBeliefs:'人々が何を聖なるものと考えるか選んでください。「別の信仰」を選ぶ場合は、短く説明してください。',
+  lessonCustomBelief:'人々が何を聖なるものと考えるか、短く説明してください。',
+  lessonOverview:'地域を知ろう', lessonOptional:'任意：発達を調べ、地域への適合性を予想する',
+  lessonDetails:'地域の詳しい情報', lessonSchedule:'90分版の授業スケジュール',
+  lessonScheduleLabels:['参加とルール説明','地域の概要・発達の確認と予想','2つのツリーを作る','イベントに対応する','4つの説明を書いて提出する','クラス全体への発表','選択についてクラスで話し合う'],
+  lessonMinutes:'%s分', lessonPacing:'7〜8チームを想定しています。回答は簡潔にし、発表の交代は短くしましょう。時間は目安であり、制限ではありません。',
+  lessonShortTalk:'ポスターを使い、クラス全体に2〜3分間で発表してください。',
+  lessonShortWait:['各チームがクラス全体に2〜3分間で発表します。','ポスターを使い、選択とイベントについて説明しましょう。','発表後は選択について、クラス全体で話し合います。'],
+  classDiscussionTitle:'歴史についてクラスで話し合う', classDiscussionLead:'次の問いをクラス全体で話し合いましょう。振り返りの記入や追加の提出は必要ありません。',
+  classDiscussionDone:'活動を終える', lessonComplete:'活動完了', reflectionDisabled:'このバージョンでは、歴史の振り返りはクラス全体で話し合います。'
+});
 
 export const dictionary = { en, ja };
 // Labels for the submission gaps and teacher rows come from the same dictionary.

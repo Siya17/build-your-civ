@@ -167,3 +167,43 @@ test('Vercel-style parsed request bodies exercise the shared HTTP API without SQ
     assert.equal((await request('/api/me',undefined,student.cookie)).data.authenticated,false);
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+
+test('lesson selection persists, locks transactionally, and Short submits without written reflections',async()=>{
+  assert.deepEqual(await store.lessonSettings(),{lessonVersion:'full',lessonLocked:false});
+  await store.setLessonVersion('short');
+  const second=createFirestoreStore(db,{secret});assert.equal((await second.lessonSettings()).lessonVersion,'short');
+  const t=(await store.listTeams()).find(t=>t.state.fixedPoint==='G');
+  const client=await asStudent(t),teacher=await store.createSession('teacher',null,'Teacher');
+  await assertSucceeds(getDoc(ref(client.db,'settings/lesson')));
+  await assertFails(setDoc(ref(client.db,'settings/lesson'),{lessonVersion:'full'}));
+  await assertFails(getDoc(ref(env.unauthenticatedContext().firestore(),'settings/lesson')));
+  await assert.rejects(store.setLessonVersion('invalid'),/Invalid activity/);
+  await store.updateTeam(t.id,{type:'chip',key:'beliefs',value:'river'},'Student');
+  await store.updateTeam(t.id,{type:'chip',key:'beliefs',value:'river',on:false},'Student');
+  assert.equal((await store.lessonSettings()).lessonLocked,true);
+  await store.updateTeam(t.id,{type:'chip',key:'beliefs',value:'river'},'Student');
+  await assert.rejects(store.setLessonVersion('full'),e=>e.status===409 && e.code==='lessonLocked');
+  await store.updateTeam(t.id,{type:'pick',tree:'tech',id:'pottery'},'Student');
+  await store.updateTeam(t.id,{type:'pick',tree:'civic',id:'laws'},'Student');
+  await store.updateTeam(t.id,{type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']}},'Student',()=>1);
+  await assert.rejects(store.submitTeam(t.id,'Student'),e=>e.gaps.includes('geographyAnswer'));
+  for(const key of ['civName','eventAnswer','geographyAnswer','governmentAnswer','economyAnswer'])await store.updateTeam(t.id,{type:'field',key,value:'Specific evidence.'},'Student');
+  for(const [key,value]of [['government','council'],['economy','farming']])await store.updateTeam(t.id,{type:'chip',key,value,on:true},'Student');
+  const done=await store.submitTeam(t.id,'Student');assert(done.submittedAt);assert.equal(done.state.beliefAnswer,'');
+  await store.setReveal(true);
+  await assert.rejects(store.updateTeam(t.id,{type:'reflectionAnswer',key:'historyDifferenceAnswer',value:'Not needed.'},'Student'),e=>e.code==='reflectionDisabled');
+  await assert.rejects(store.submitReflection(t.id,'Student',done.version),e=>e.code==='reflectionDisabled');
+  await store.deleteTeam(t.id);assert.equal((await store.lessonSettings()).lessonLocked,false);
+  await store.setLessonVersion('full');
+});
+
+test('a race between version selection and the first choice cannot change an active lesson',async()=>{
+  const t=(await store.listTeams())[0];
+  const result=await Promise.allSettled([store.setLessonVersion('short'),store.updateTeam(t.id,{type:'chip',key:'beliefs',value:'river'},'Student')]);
+  assert.equal(result[1].status,'fulfilled');
+  const settings=await store.lessonSettings();assert(settings.lessonLocked);
+  if(result[0].status==='fulfilled')assert.equal(settings.lessonVersion,'short');
+  else {assert.equal(result[0].reason.code,'lessonLocked');assert.equal(settings.lessonVersion,'full');}
+  await assert.rejects(store.setLessonVersion(settings.lessonVersion==='full'?'short':'full'),e=>e.code==='lessonLocked');
+});

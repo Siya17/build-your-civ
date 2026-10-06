@@ -6,7 +6,7 @@ import { trees } from '../shared/cards.js';
 import { worldMap } from '../shared/regions.js';
 import { steps, stepById, stepDone, stepAvailable, nextStep, neighbourStep, stepApplies, teamStep, chapterOf } from '../shared/flow.js';
 import { studentPage } from './screens.js';
-import { teacherPage, teacherList, teacherDetailView, teacherPrint, posterOverlay, revealPanel, missingLetters } from './teacher.js';
+import { teacherPage, teacherList, teacherDetailView, teacherPrint, posterOverlay, revealPanel, lessonPanel, missingLetters } from './teacher.js';
 import { blocker } from './tree.js';
 import { esc, fmt, rich, plain, photo } from './ui.js';
 import { printPosters } from './printing.js';
@@ -20,7 +20,8 @@ const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 const narrow=window.matchMedia('(max-width: 760px)');
 let lang=localStorage.getItem('civ_lang')==='ja'?'ja':'en';
 let session=null,team=null,roster=[],teams=[],stream=null,authMode='student',notice='',noticeType='info',sync='saved',reveal=false;
-let teacherDetail=null,teacherDetailId=null,showPoster=false;
+let lessonVersion='full',lessonLocked=false;
+let teacherDetail=null,teacherDetailId=null,showPoster=false,pickedTeams=new Set();
 let presenceFields={},presenceSent=null,popOwner=null;
 // serverTeam is the last state the server confirmed. team is what the page shows: that state
 // with this student's unconfirmed actions on top, so a click answers at once. Dice actions
@@ -79,6 +80,7 @@ async function boot(){
 }
 function adopt(data){
   clearStudentWork();
+  adoptLesson(data);
   session=data.authenticated?{role:data.role,name:data.name}:null;
   if(data.team){serverTeam=null;pending=[];adoptTeam(data.team)}
   if(data.roster)roster=data.roster;
@@ -95,13 +97,20 @@ function clearStudentWork(){
 function projected(){
   let state=serverTeam.state;
   for(const payload of pending){try{state=applyAction(state,payload)}catch{}}
-  return {...serverTeam,state};
+  return {...serverTeam,state,lessonVersion};
 }
 function adoptTeam(incoming){
   if(!serverTeam||incoming.version>=serverTeam.version)serverTeam=incoming;
   team=projected();
 }
 
+function adoptLesson(data) {
+  const changed=typeof data.lessonVersion==='string' && data.lessonVersion!==lessonVersion;
+  if(typeof data.lessonVersion==='string')lessonVersion=data.lessonVersion==='short'?'short':'full';
+  if(typeof data.lessonLocked==='boolean')lessonLocked=data.lessonLocked;
+  if(changed && serverTeam){team=projected();ui.sub=null;if(!stepApplies(ui.step,team)){ui.step=nextStep(team,seen,reveal).id;storeStep()}}
+  return changed;
+}
 function openStream(){
   stream?.close();stream=new ClassroomStream();
   stream.onopen=()=>{sync='saved';updateSync()};
@@ -113,8 +122,10 @@ function openStream(){
     render();if(reason!=='logout')toast(L().revoked,'error');
   });
   stream.addEventListener('team',onTeamEvent);
+  stream.addEventListener('lesson',event=>{adoptLesson(JSON.parse(event.data));render()});
   stream.addEventListener('reveal',event=>{
-    const open=JSON.parse(event.data).reveal;if(open===reveal)return;reveal=open;
+    const data=JSON.parse(event.data),changed=adoptLesson(data);
+    const open=data.reveal;if(open===reveal){if(changed || session?.role==='teacher')render();return}reveal=open;
     if(session?.role==='teacher'){patchTeacher();return}
     if(session?.role==='student'){
       if(!reveal&&chapterOf(ui.step)==='reveal'){
@@ -165,7 +176,7 @@ function updatePresence(){
 function captureFocus(){
   const el=document.activeElement;
   if(!el||el===document.body||!app.contains(el))return null;
-  const key=['field','card','preview','act','nav','select','action','mode','term','sub'].find(name=>el.dataset?.[name]!==undefined);
+  const key=['field','card','preview','act','nav','select','action','mode','term','sub','pick'].find(name=>el.dataset?.[name]!==undefined);
   if(!key)return el.id?{id:el.id}:null;
   return {key:[`data-${key}`,el.dataset[key]],selection:typeof el.selectionStart==='number'?[el.selectionStart,el.selectionEnd]:null};
 }
@@ -214,7 +225,7 @@ function morph(container,html){
   morphChildren(container,[...next.content.childNodes]);
 }
 const studentContext=()=>({team,lang,L:L(),ui,step:ui.step,seen,reveal,sync,roster,compact:narrow.matches,teamStepId:teamStep(team,reveal).id,rolling:ui.rolling,anim:ui.anim,flash:ui.flash});
-const teacherContext=()=>({L:L(),lang,teams,detail:teacherDetail,newCodes,reveal});
+const teacherContext=()=>({L:L(),lang,teams:teams.map(t=>({...t,lessonVersion})),detail:teacherDetail?{...teacherDetail,lessonVersion}:null,newCodes,reveal,lessonVersion,lessonLocked,picked:pickedTeams});
 function render(){
   closeTerm(false);
   document.documentElement.lang=lang;
@@ -232,6 +243,7 @@ function patchTeacher(){
   const extra=document.querySelector('.create-panel .letter-teams'),missing=missingLetters(teams);
   if(extra&&!missing)extra.remove();else if(extra)extra.textContent=`${L().addLetterTeams} (${missing})`;
   const right=document.querySelector('#teacher-right');if(right)morph(right,teacherDetail?teacherDetailView(ctx):`<div class="panel teacher-welcome"><p>✦ ${L().studentWork}</p></div>`);
+  const lesson=document.querySelector('#lesson-panel');if(lesson)morph(lesson,lessonPanel(ctx));
   const panel=document.querySelector('#reveal-panel');if(panel)morph(panel,revealPanel(ctx));
   const printPanel=document.querySelector('#class-print');if(printPanel)morph(printPanel,teacherPrint(ctx));
   restoreFocus(focus);
@@ -251,7 +263,8 @@ const canTransition=()=>typeof document.startViewTransition==='function'&&!reduc
 async function transition(direction,change){
   const swap=()=>{change();render();window.scrollTo({top:0})};
   if(canTransition()){
-    document.documentElement.dataset.nav=direction;
+    // Not data-nav: the click handler would read <html> as a navigation button.
+    document.documentElement.dataset.navDirection=direction;
     try{await document.startViewTransition(swap).finished}catch{}
   } else {
     swap();
@@ -506,11 +519,18 @@ async function teacherAction(id){
   } else if(id.startsWith('delete:')){
     const teamId=Number(id.split(':')[1]);if(!confirm(L().deleteWarning))return;
     const data=await api(`/api/teacher/teams/${teamId}`,{},'DELETE');
-    teams=data.teams;newCodes.delete(teamId);codeStore.save(newCodes);
+    teams=data.teams;newCodes.delete(teamId);codeStore.save(newCodes);pickedTeams.delete(teamId);
     if(teacherDetailId===teamId){teacherDetail=null;teacherDetailId=null;showPoster=false}
     render();toast(L().deleted);
+  } else if(id==='delete-picked'){
+    const ids=teams.filter(x=>pickedTeams.has(x.id)).map(x=>x.id);
+    if(!ids.length||!confirm(fmt(L().deleteManyWarning,ids.length)))return;
+    const data=await api('/api/teacher/teams/delete',{ids});
+    teams=data.teams;for(const teamId of ids)newCodes.delete(teamId);codeStore.save(newCodes);pickedTeams.clear();
+    if(ids.includes(teacherDetailId)){teacherDetail=null;teacherDetailId=null;showPoster=false}
+    render();toast(fmt(L().deletedMany,data.deleted));
   } else if(id==='print-all'){
-    await printPosters(teams.filter(item=>item.submittedAt),lang,L());
+    await printPosters(teacherContext().teams.filter(item=>item.submittedAt),lang,L());
   }
 }
 async function onAction(el){
@@ -519,7 +539,7 @@ async function onAction(el){
     if(id==='language'){await actionQueue;await flushAll();lang=lang==='en'?'ja':'en';localStorage.setItem('civ_lang',lang);render()}
     else if(id==='logout'){
       await actionQueue;await flushAll();answerDrafts.clear();await api('/api/logout',{});stream?.close();stream=null;
-      clearStudentWork();session=null;team=null;serverTeam=null;teacherDetail=null;teacherDetailId=null;showPoster=false;presenceFields={};render();
+      clearStudentWork();session=null;team=null;serverTeam=null;teacherDetail=null;teacherDetailId=null;showPoster=false;pickedTeams.clear();presenceFields={};render();
     }
     else if(id==='fullscreen'){
       const target=document.querySelector('#poster-wrap');
@@ -528,7 +548,7 @@ async function onAction(el){
     else if(id==='print'){
       await actionQueue;await flushAll();
       if(document.fullscreenElement)await document.exitFullscreen();
-      await printPosters([session?.role==='teacher'?teacherDetail:team].filter(Boolean),lang,L());
+      await printPosters([session?.role==='teacher'?teacherContext().detail:team].filter(Boolean),lang,L());
     }
     else await teacherAction(id);
   }catch(error){toast(message(error),'error')}
@@ -568,7 +588,7 @@ async function renameSubmit(event){
 // ---- Events (delegated once on the page) ----------------------------------------------
 app.addEventListener('click',event=>{
   const el=event.target.closest('[data-term],[data-nav],[data-act],[data-card],[data-preview],[data-sub],[data-select],[data-action],[data-mode]');
-  if(!el||el.disabled)return;
+  if(!el||el.disabled||!app.contains(el))return;
   const d=el.dataset;
   if(session?.role==='student'&&ui.rolling)return;
   if(d.term!==undefined){openTerm(el);return}
@@ -582,6 +602,8 @@ app.addEventListener('click',event=>{
   else if(d.sub==='close')closeSub();
   else if(d.select!==undefined){ui.selected=d.select;render()}
 });
+// An opened section at the bottom of a screen would otherwise sit under the sticky navigation.
+app.addEventListener('toggle',event=>{if(event.target.open&&event.target.matches?.('details.numbers'))event.target.scrollIntoView({behavior:reducedMotion.matches?'auto':'smooth',block:'nearest'})},true);
 // Keep a coloured panel in place of a photo that cannot be loaded.
 app.addEventListener('error',event=>{if(event.target.matches?.('img[data-photo]'))event.target.closest('figure')?.classList.add('failed')},true);
 app.addEventListener('submit',event=>{
@@ -593,6 +615,16 @@ app.addEventListener('input',event=>{
   const el=event.target;
   if(el.dataset?.field!==undefined)fieldInput(el);
   else if(el.classList?.contains('code-input')){const cleaned=el.value.toUpperCase().replace(/[^A-Z0-9 -]/g,'').slice(0,16);if(el.value!==cleaned)el.value=cleaned}
+});
+app.addEventListener('change',event=>{
+  if(event.target.id==='lesson-version'){
+    const value=event.target.value;event.target.disabled=true;
+    api('/api/teacher/lesson',{lessonVersion:value}).then(data=>{adoptLesson(data);render()}).catch(error=>{render();toast(message(error),'error')});return;
+  }
+  const pick=event.target.dataset?.pick;if(pick===undefined)return;
+  if(pick==='all'){if(event.target.checked)for(const x of teams)pickedTeams.add(x.id);else pickedTeams.clear()}
+  else if(event.target.checked)pickedTeams.add(Number(pick));else pickedTeams.delete(Number(pick));
+  patchTeacher();
 });
 app.addEventListener('focusin',event=>{if([...writableFields,...reflectionFields].includes(event.target.dataset?.field))postPresence(event.target.dataset.field)});
 // Short definitions float beside tree cards on hover or keyboard focus; a tap or click opens the

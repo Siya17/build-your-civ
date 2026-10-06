@@ -16,7 +16,7 @@ const sourceFiles = {
   '/game.css':['public/game.css',css]
 };
 for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher','regional-map','regional-geography','realtime']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
-for (const module of ['game','cards','regions','glossary','flow','i18n','credits']) sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,js];
+for (const module of ['lesson','game','cards','regions','glossary','flow','i18n','credits']) sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,js];
 // Every image under public/assets is served at its own path.
 const imageTypes = {'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
 function addAssets(folder) {
@@ -106,13 +106,14 @@ async function broadcastStore(store,teamId,actor) {
     if (client.role==='teacher') writeEvent(client,'teams',teamsPayload ??= JSON.stringify({teams:await store.listTeams()}));
     else if (client.teamId===teamId) writeEvent(client,'team',teamPayload);
   }
+  await broadcastRevealStore(store);
 }
 function broadcastPresence(teamId) {
   const payload = JSON.stringify({roster:localLiveNames(teamId),fields:localPresenceFields(teamId)});
   for (const client of [...clients]) if (client.role==='student' && client.teamId===teamId) writeEvent(client,'presence',payload);
 }
 async function broadcastRevealStore(store) {
-  const payload = JSON.stringify({reveal:await store.revealOpen()});
+  const payload = JSON.stringify({reveal:await store.revealOpen(),...await store.lessonSettings()});
   for (const client of [...clients]) writeEvent(client,'reveal',payload);
 }
 function revokeTeam(teamId) {
@@ -235,8 +236,8 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
       if (pathname==='/api/me' && req.method==='GET') {
         const session=await getSession(cookie(req));
         if (!session) {send(res,200,{authenticated:false});return;}
-        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:await listTeams(),reveal:await revealOpen()});
-        else {const team=await getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:await liveNames(team.id,session.name),presence:await presenceFields(team.id),reveal:await revealOpen()});}
+        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:await listTeams(),reveal:await revealOpen(),...await store.lessonSettings()});
+        else {const team=await getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:await liveNames(team.id,session.name),presence:await presenceFields(team.id),reveal:await revealOpen(),...await store.lessonSettings()});}
         return;
       }
       if (pathname==='/api/auth/teacher' && req.method==='POST') {
@@ -244,7 +245,7 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         const body=await readJson(req);
         if (typeof body.password!=='string' || !sameHash(body.password,teacherPassword)) {send(res,401,{error:'Incorrect teacher password'});return;}
         const {token}=await createSession('teacher',null,'Teacher');
-        send(res,200,{authenticated:true,role:'teacher',teams:await listTeams(),reveal:await revealOpen()},{'Set-Cookie':setCookie(token)});return;
+        send(res,200,{authenticated:true,role:'teacher',teams:await listTeams(),reveal:await revealOpen(),...await store.lessonSettings()},{'Set-Cookie':setCookie(token)});return;
       }
       if (pathname==='/api/auth/team' && req.method==='POST') {
         if (!await allowLogin('student')) {send(res,429,{error:'Too many sign-in attempts from this network. Ask your teacher for help.'});return;}
@@ -255,7 +256,7 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         const team=await findTeamByCode(normalized);
         if (!team) {send(res,401,{error:'Team code not found'});return;}
         const {token}=await createSession('student',team.id,name);
-        send(res,200,{authenticated:true,role:'student',name,team,roster:await liveNames(team.id,name),presence:await presenceFields(team.id),reveal:await revealOpen()},{'Set-Cookie':setCookie(token)});
+        send(res,200,{authenticated:true,role:'student',name,team,roster:await liveNames(team.id,name),presence:await presenceFields(team.id),reveal:await revealOpen(),...await store.lessonSettings()},{'Set-Cookie':setCookie(token)});
         broadcastPresence(team.id);return;
       }
       if (pathname==='/api/logout' && req.method==='POST') {
@@ -276,7 +277,7 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         client.keepalive=setInterval(()=>writeEvent(client,'ping','{}'),20_000);
         clients.add(client);
         // Reconnecting browsers may have missed both a teammate's action and a reveal.
-        writeEvent(client,'reveal',JSON.stringify({reveal:await revealOpen()}));
+        writeEvent(client,'reveal',JSON.stringify({reveal:await revealOpen(),...await store.lessonSettings()}));
         if (session.role==='student') writeEvent(client,'team',JSON.stringify({team:await getTeam(session.teamId),roster:await liveNames(session.teamId)}));
         else writeEvent(client,'teams',JSON.stringify({teams:await listTeams()}));
         req.on('close',()=>{const teamId=client.teamId;dropClient(client);if (client.role==='student') broadcastPresence(teamId)});
@@ -312,6 +313,11 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:await getTeam(session.teamId)});return;}throw error;}
         send(res,200,{team,roster:await liveNames(team.id,session.name)});await broadcast(team.id,session.name);return;
       }
+      if (pathname==='/api/teacher/lesson' && req.method==='POST') {
+        await auth(req,'teacher'); const body=await readJson(req);
+        const settings=await store.setLessonVersion(body.lessonVersion);
+        send(res,200,settings); await broadcastReveal(); return;
+      }
       if (pathname==='/api/teacher/reveal' && req.method==='POST') {
         await auth(req,'teacher');const body=await readJson(req);
         if (typeof body.reveal!=='boolean') {send(res,400,{error:'Send reveal: true or false'});return;}
@@ -327,6 +333,24 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         send(res,200,{made:made.length,teams});
         const payload=JSON.stringify({teams});
         for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
+        await broadcastReveal();
+        return;
+      }
+      if (pathname==='/api/teacher/teams/delete' && req.method==='POST') {
+        await auth(req,'teacher');const body=await readJson(req);
+        const ids=Array.isArray(body.ids)?[...new Set(body.ids)]:[];
+        if (!ids.length || ids.length>500 || !ids.every(id=>Number.isSafeInteger(id)&&id>0)) {send(res,400,{error:'Send ids: a list of team numbers'});return;}
+        let deleted=0;
+        // Teams already gone (another tab, a second click) are skipped rather than failing the rest.
+        for (const id of ids) {
+          if (!await getTeam(id)) continue;
+          await deleteTeam(id);revokeTeam(id);deleted++;
+        }
+        const remaining=await listTeams();
+        send(res,200,{ok:true,deleted,teams:remaining});
+        const payload=JSON.stringify({teams:remaining});
+        for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
+        await broadcastReveal();
         return;
       }
       const detail=pathname.match(/^\/api\/teacher\/teams\/(\d+)$/);
@@ -348,6 +372,7 @@ export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=
         send(res,200,{ok:true,teams:remaining});
         const payload=JSON.stringify({teams:remaining});
         for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
+        await broadcastReveal();
         return;
       }
       const activityRoute=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/activity$/);

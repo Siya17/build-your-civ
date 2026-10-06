@@ -18,12 +18,21 @@ function readyTeam(point = 'G', techIds = ['pottery','irrigation','mining','maso
   return state;
 }
 
-test('region prices follow the slide: G Nile has ★ Irrigation, ★ Sailing and △ Horseback only', () => {
-  assert.deepEqual(Object.fromEntries(Object.entries(regions.G.prices).map(([id,[price]]) => [id,price])), { irrigation:'free', sailing:'free', horseback:'hard' });
+test('region prices: G Nile rates four developments easy and three difficult', () => {
+  assert.deepEqual(Object.fromEntries(Object.entries(regions.G.prices).map(([id,[price]]) => [id,price])), { irrigation:'free', sailing:'free', masonry:'free', writing:'free', horseback:'hard', shipbuilding:'hard', iron:'hard' });
   assert.equal(costOf('G','irrigation'), 0);
   assert.equal(costOf('G','horseback'), 2);
-  assert.equal(costOf('G','writing'), 1);
+  assert.equal(costOf('G','pottery'), 1);
   assert.equal(costOf('H','husbandry'), null);
+});
+
+test('every region rates a similar number of easy and difficult developments', () => {
+  // Science and society cards together; unavailable counts as difficult. At most one apart.
+  const counts = points.map(point => { const prices = Object.values(regions[point].prices).map(([price]) => price); return { easy:prices.filter(price => price === 'free').length, hard:prices.filter(price => price !== 'free').length }; });
+  for (const kind of ['easy','hard']) {
+    const values = counts.map(count => count[kind]);
+    assert(Math.max(...values) - Math.min(...values) <= 1, `${kind}: ${values.join(' ')}`);
+  }
 });
 
 test('every region price names a real card, and every region can start both trees', () => {
@@ -43,13 +52,13 @@ test('every region price names a real card, and every region can start both tree
 });
 
 test('each tree has 7 points: normal cards cost 1, ★ cards are free, △ cards cost 2', () => {
-  let state = run(start('G'), pick('tech','pottery','writing','currency','math','astrology','mining','masonry'));
+  let state = run(start('G'), pick('tech','pottery','writing','currency','math','astrology','mining','husbandry','archery'));
   assert.equal(spent(state,'tech'), 7);
   throwsCode(() => applyAction(state, { type:'pick', tree:'tech', id:'wheel' }), 'overBudget');
-  // ★ Irrigation and ★ Sailing are free, so they still fit.
-  state = run(state, pick('tech','irrigation','sailing'));
+  // ★ Irrigation, ★ Sailing and ★ Masonry are free, so they still fit (★ Writing is already in).
+  state = run(state, pick('tech','irrigation','sailing','masonry'));
   assert.equal(spent(state,'tech'), BUDGET);
-  assert.equal(state.tech.length, 9);
+  assert.equal(state.tech.length, 11);
 });
 
 test('arrows: a card needs every chosen parent, and ★ cards still need their arrows', () => {
@@ -84,7 +93,8 @@ test('a △ card is rolled once on the server and never re-rolled', () => {
 });
 
 test('removing a card must name every card that goes with it', () => {
-  const state = run(start('G'), pick('tech','pottery','sailing','astrology','navigation','shipbuilding'));
+  // Shipbuilding is △ in G, so it takes one success roll.
+  const state = run(start('G'), pick('tech','pottery','sailing','astrology','navigation','shipbuilding'), dice(5));
   throwsCode(() => applyAction(state, { type:'unpick', tree:'tech', id:'sailing', cascade:[] }), 'cascadeChanged', 409);
   const noSailing = applyAction(state, { type:'unpick', tree:'tech', id:'sailing', cascade:['navigation','shipbuilding'] });
   assert.deepEqual(noSailing.tech, ['pottery','astrology'], 'Navigation also goes: Sailing is required alongside Astrology');
@@ -182,14 +192,14 @@ test('4 Epidemic: lose one society card, two if the team had Foreign Trade', () 
 test('5 Worn-out soil: working Foreign Trade imports food; partly working does not', () => {
   const traders = readyTeam('G', ['pottery','writing'], ['laws','trade']);
   assert.equal(eventPlan(applyAction(traders, confirm(traders), { rollDie:eventDice(5) })).protectedBy, 'trade');
-  // In K (Greenland) Pottery and Foreign Trade are △. Trade rolled 1: it only partly works.
-  const kTeam = run(start('K'), [...pick('tech','pottery','sailing'), ...pick('civic','laws','trade')], dice(4, 1));
+  // In K (Greenland) Foreign Trade is △. Trade rolled 1: it only partly works.
+  const kTeam = run(start('K'), [...pick('tech','pottery','sailing'), ...pick('civic','laws','trade')], dice(1));
   assert.equal(statusOf(kTeam,'trade'), 'partly');
   assert.equal(eventPlan(applyAction(kTeam, confirm(kTeam), { rollDie:eventDice(5) })).kind, 'lose');
 });
 
 test('6 Good years: one free card from either tree, even with a full budget; △ gains are rolled', () => {
-  const full = run(start('G'), [...pick('tech','pottery','writing','currency','math','astrology','mining','husbandry'), ...pick('civic','laws')]);
+  const full = run(start('G'), [...pick('tech','pottery','writing','currency','math','astrology','mining','husbandry','bronze'), ...pick('civic','laws')]);
   assert.equal(spent(full,'tech'), 7);
   const good = applyAction(full, confirm(full), { rollDie:eventDice(6) });
   assert(eventPlan(good).options.some(option => option.id === 'archery'));
@@ -201,7 +211,7 @@ test('6 Good years: one free card from either tree, even with a full budget; △
   const lucky = applyAction(australia, confirm(australia), { rollDie:eventDice(6) });
   assert(!eventPlan(lucky).options.some(option => option.id === 'husbandry'), '✗ cards cannot be gained');
   // In K, Animal Husbandry is △: gaining it needs its own success roll.
-  const k = run(start('K'), [...pick('tech','mining'), ...pick('civic','laws')], dice(3));
+  const k = run(start('K'), [...pick('tech','mining'), ...pick('civic','laws')]);
   const kGood = applyAction(k, confirm(k), { rollDie:eventDice(6) });
   const die = dice(2);
   const herd = applyAction(kGood, { type:'eventGain', tree:'tech', id:'husbandry', index:0 }, { rollDie:die });
@@ -400,7 +410,7 @@ test('event losses accept the design’s unique card id and still validate a sup
 });
 
 test('event readiness blocks migration problems without consuming dice', () => {
-  const overBudget = normalizeState({ v:2, mapPoint:'G', tech:['pottery','writing','currency','math','astrology','mining','masonry','wheel'], civic:['laws'] });
+  const overBudget = normalizeState({ v:2, mapPoint:'G', tech:['pottery','writing','currency','math','astrology','mining','husbandry','archery','wheel'], civic:['laws'] });
   const impossible = normalizeState({ v:2, mapPoint:'H', tech:['pottery','husbandry','archery'], civic:['laws'] });
   const unrolled = normalizeState({ v:2, mapPoint:'G', tech:['husbandry','archery','horseback'], civic:['laws'] });
   for (const [state, code] of [[initialState(),'noPlace'], [start('G'),'needsBothTrees'], [overBudget,'fixTrees'], [impossible,'fixTrees'], [unrolled,'fixTrees']]) {
@@ -460,7 +470,7 @@ test('Construction uses stonework and transport, while advanced branches respect
   assert.deepEqual(cardById.construction.parents,['masonry','wheel']);
   const stonework = run(start('H'),pick('tech','mining','masonry'));
   throwsCode(() => applyAction(stonework,{ type:'pick',tree:'tech',id:'construction' }), 'needsParent');
-  const built = run(stonework,pick('tech','wheel','construction'));
+  const built = run(stonework,pick('tech','wheel','construction'),dice(5));
   assert(built.tech.includes('construction'),'construction remains possible where horses are absent');
   assert.equal(minimumCost('G','defense'),8);
   assert.equal(minimumCost('G','history'),8);
@@ -575,7 +585,8 @@ test('old single-die events preserve their results without inventing another rol
 });
 
 test('7 Severe storm checks working Engineering and only permits Science leaves', () => {
-  const builders = readyTeam('G',['mining','bronze','iron','wheel','engineering'],['laws']);
+  // Iron Working is △ in G and takes a success roll.
+  const builders = run(start('G'),[...pick('tech','mining','bronze','iron','wheel','engineering'),...pick('civic','laws')],dice(5));
   const safe = applyAction(builders,confirm(builders),{ rollDie:eventDice(7) });
   assert.equal(eventPlan(safe).protectedBy,'engineering');
   assert(eventPlan(safe).resolved);
@@ -632,12 +643,12 @@ test('new positive events limit additions to the intended tree and preserve gain
   throwsCode(() => applyAction(rawMaterials,{ type:'eventGain',tree:'civic',id:'trade',index:0 }),'cannotGain');
   const visitors = applyAction(ready,confirm(ready),{ rollDie:eventDice(11) });
   throwsCode(() => applyAction(visitors,{ type:'eventGain',tree:'tech',id:'writing',index:0 }),'cannotGain');
-  const full = readyTeam('G',['pottery','writing','currency','math','astrology','mining','husbandry'],['laws']);
+  const full = readyTeam('G',['pottery','writing','currency','math','astrology','mining','husbandry','bronze'],['laws']);
   const discovery = applyAction(full,confirm(full),{ rollDie:eventDice(10) });
   assert.equal(spent(applyAction(discovery,{ type:'eventGain',tree:'tech',id:'archery',index:0 }),'tech'),7);
   const noOptions = normalizeState({ ...ready,tech:trees.tech.map(card => card.id),event:{id:10,dice:[4,4],choice:'',lost:[],gained:[]} });
   assert(eventPlan(noOptions).resolved,'a full eligible tree skips the gain decision');
-  const arctic = run(start('K'),[...pick('tech','mining'),...pick('civic','laws')],dice(4));
+  const arctic = run(start('K'),[...pick('tech','mining'),...pick('civic','laws')]);
   const arcticDiscovery = applyAction(arctic,confirm(arctic),{ rollDie:eventDice(10) });
   const gainDie = dice(2);
   const herd = applyAction(arcticDiscovery,{ type:'eventGain',tree:'tech',id:'husbandry',index:0 },{rollDie:gainDie});

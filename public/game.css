@@ -96,17 +96,6 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .hero-map{margin:4px 0 22px}
 .hero-map.small{max-width:760px}
 .choice-line{font-size:1.15rem;margin-top:-6px}
-.where-stage{position:relative;border-radius:var(--radius);overflow:hidden;height:220px;background:#0d2a44;box-shadow:var(--shadow)}
-.where-stage .where-photo{position:absolute;inset:0;border-radius:0;box-shadow:none}
-.where-stage .where-photo img{height:100%;aspect-ratio:auto}
-.where-stage .world-map{position:absolute;z-index:2;right:12px;bottom:12px;width:30%;min-width:150px;border:3px solid #fff;border-radius:10px}
-.where-stage .world-map .map-dot{width:14px;height:14px;font-size:0;border-width:1px}
-.where-stage .world-map .map-dot.active{width:18px;height:18px}
-.where-stage.playing .world-map{inset:0;width:100%;height:100%;border:0;border-radius:0;animation:zoom-in 2s .3s cubic-bezier(.5,0,.3,1) both}
-.where-stage.playing .world-map img{height:100%;object-fit:cover}
-.where-stage.playing .where-photo{animation:fade-in .8s 1.9s ease both}
-@keyframes zoom-in{to{transform:scale(5)}}
-@keyframes fade-in{from{opacity:0}}
 .area{font-weight:700;color:var(--teal-dark);margin-top:12px}
 
 /* Welcome screens */
@@ -166,7 +155,7 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .chart.temp .line{fill:none;stroke:#c0533f;stroke-width:2;stroke-linejoin:round}
 .chart.temp .dot{fill:#c0533f;stroke:#fff;stroke-width:2}
 .chart .mark:hover .dot{r:6}
-.numbers{margin-top:12px}
+.numbers{margin-top:12px;scroll-margin-bottom:110px}
 .numbers summary{cursor:pointer;font-weight:700;color:var(--teal-dark)}
 .table-scroll{overflow-x:auto}
 .numbers table{border-collapse:collapse;font-size:.85rem;margin-top:8px;background:#fff}
@@ -426,13 +415,11 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
   .screen-nav .btn.ghost{padding:10px 8px;flex:0 0 auto}
   .screen-nav .btn.secondary{flex:0 1 auto;padding:10px 12px}
   .team-chip{display:none}
-  .where-stage{aspect-ratio:4/3}
   .term-pop{left:0!important;right:0;bottom:0;top:auto!important;width:auto!important}
   .pop-card{border-radius:18px 18px 0 0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
   #notice{bottom:110px}
 }
 @media (prefers-reduced-motion:reduce){
-  .where-stage.playing .world-map{animation:none}
   .die.spin{animation:none}
   html::view-transition-old(screen),html::view-transition-new(screen){animation:none}
 }
@@ -460,3 +447,15 @@ button.map-dot:hover{transform:translate(-50%,-50%) scale(1.2)}
 .climate-past{margin:12px 0;padding:14px 18px;border-left:4px solid var(--rust);background:#fff;border-radius:8px}
 .climate-past h2{font-size:1rem;margin:0 0 6px}
 .climate-past p{margin:0 0 6px}
+/* Class pacing controls and the compact regional overview. */
+.lesson-panel{margin-bottom:1rem}
+.lesson-panel label{display:block;margin-bottom:.5rem}
+.lesson-panel select{max-width:100%;padding:.65rem;font:inherit;border:1px solid var(--line,#ccd0d5);border-radius:.5rem;background:var(--paper,#fff);color:inherit}
+.lesson-panel table{width:100%;border-collapse:collapse;margin-top:.75rem}
+.lesson-panel td{padding:.4rem .25rem;border-bottom:1px solid var(--line,#ccd0d5)}
+.lesson-panel td:last-child{white-space:nowrap;text-align:right}
+.lesson-details{margin:1rem 0;padding:1rem;border:1px solid var(--line,#ccd0d5);border-radius:.75rem}
+.lesson-details>summary{cursor:pointer;font-weight:600}
+.lesson-details[open]>summary{margin-bottom:1rem}
+.discussion-questions{padding-left:1.5rem}
+.discussion-questions li{padding-bottom:1rem}

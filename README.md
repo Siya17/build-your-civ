@@ -18,7 +18,15 @@ Open the URL printed in the terminal, usually [http://127.0.0.1:5173](http://127
 
 Run the rules, content, flow and HTTP integration checks with `npm test`. Tests use a temporary database and include a 30-student classroom simulation.
 
-## Classroom workflow
+## Activity versions
+
+Before students begin, choose **Full activity** or **90-minute activity** on the teacher dashboard. The choice applies to the whole class and is saved across restarts and reconnects. Existing classrooms default to Full. The selector locks after the first shared student action or saved answer, including predictions and society selections. Undoing work or reopening a submission does not unlock it; delete the previous class’s worked teams when preparing a new class.
+
+Full retains the complete lesson. Short uses a combined regional overview with expandable details, followed by separate development exploration, suitability prediction, and regional-rating comparison screens. It requires the civilization name, geography, government, economy, and event explanations, plus all government/economy/belief selections. Answers should be 2–3 sentences. Choosing a custom belief also requires a brief description. Game rules and event resolution are identical in both versions.
+
+Short has **no historical reveal, historical comparison, written historical reflections, or reflection submission**. Teams give 2–3 minute whole-class talks, then discuss their geography, development choices, and response to the event together. Its teacher schedule totals 90 minutes for 7–8 teams: 5 joining/rules, 8 regional overview/development exploration/predictions, 17 trees, 6 event, 15 writing/submission, 25 presentations, and 14 class discussion. These are pacing targets, not enforced timers.
+
+## Classroom workflow (Full)
 
 1. **Meet your place.** Read the regional context, study the world and physical maps, and examine climate and resources. Browse all 33 technologies and cultural developments: each shows a short definition on hover or focus and its full explanation on click. On the challenge screen, every development starts as normal, and the team marks only the ones it expects to be easy or difficult here; marks are shared live. Then compare the marks with the local suitability ratings and learn the point rules. Short, optional team notes answer the discussion prompts on both screens. A new database starts with Team A through Team K, each fixed to its matching place.
 2. **Build two trees.** Spend up to **7 points in each tree**, with at least one card in each. Follow the arrows: every listed parent must be chosen to meet a prerequisite. Free cards still need their prerequisites. Unused points are allowed.

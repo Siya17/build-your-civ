@@ -25,7 +25,7 @@ export class ClassroomStream {
     if(setup.mode==='sse') {
       const source=new EventSource('/api/events');this.cleanups.push(()=>source.close());
       source.onopen=()=>this.onopen?.();source.onerror=event=>this.onerror?.(event);
-      for(const name of ['team','teams','presence','reveal','revoked'])source.addEventListener(name,event=>{if(!this.closed)this.listeners.get(name)?.(event);});
+      for(const name of ['team','teams','presence','reveal','lesson','revoked'])source.addEventListener(name,event=>{if(!this.closed)this.listeners.get(name)?.(event);});
     } else {
       const {connectFirebase}=await import('/firebase-client.js');if(this.closed)return;
       await connectFirebase(this,setup);

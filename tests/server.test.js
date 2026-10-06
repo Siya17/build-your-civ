@@ -625,6 +625,25 @@ test('teacher can rename and delete a team, and students are signed out',limit,a
   assert.equal((await request(`/api/teacher/teams/${team.id}`,{},teacher,{method:'DELETE'})).status,404);
 });
 
+test('teacher can delete several teams at once, and their students are signed out',limit,async()=>{
+  const teacher=await signInTeacher();
+  const one=await makeTeam(teacher,'Bulk One'),two=await makeTeam(teacher,'Bulk Two'),kept=await makeTeam(teacher,'Bulk Kept');
+  const student=await joinTeam(one.code,'Ren');
+  const stream=await openStream(student.cookie);
+  assert.equal((await request('/api/teacher/teams/delete',{ids:[one.id,two.id]},student.cookie)).status,401,'students cannot delete');
+  assert.equal((await request('/api/teacher/teams/delete',{ids:[]},teacher)).status,400,'an empty list is refused');
+  assert.equal((await request('/api/teacher/teams/delete',{ids:['x']},teacher)).status,400,'ids must be numbers');
+  const removed=await request('/api/teacher/teams/delete',{ids:[one.id,two.id,one.id]},teacher);
+  assert.equal(removed.status,200);
+  assert.equal(removed.data.deleted,2);
+  assert(!removed.data.teams.some(x=>x.id===one.id||x.id===two.id));
+  assert(removed.data.teams.some(x=>x.id===kept.id),'unselected teams stay');
+  await stream.waitFor(f=>f.startsWith('event: revoked'),'the student being told');
+  assert.equal((await request('/api/me',undefined,student.cookie)).data.authenticated,false);
+  const again=await request('/api/teacher/teams/delete',{ids:[one.id]},teacher);
+  assert.equal(again.data.deleted,0,'teams already gone are skipped');
+});
+
 test('activity log reports what each student saved',limit,async()=>{
   const teacher=await signInTeacher();
   const team=await makeTeam(teacher,'Busy Team');
@@ -728,4 +747,49 @@ test('static assets are cached by content and compressed; the old pages are gone
   }
   const home=await fetch(base+'/');
   assert.match(await home.text(),/app\.js/);
+});
+
+
+test('class lesson selection is teacher-only, persistent, live, and locked after student choices', limit, async()=>{
+  const store=await import('../server/store.js');
+  const teacher=await signInTeacher();
+  // These existing integration cases share a database; clear only their disposable teams.
+  for(const team of store.listTeams())store.deleteTeam(team.id);
+  assert.equal((await request('/api/me',undefined,teacher)).data.lessonVersion,'full');
+  const made=store.createTeam('Short version','G'),joined=await joinTeam(made.code,'Short Writer');
+  assert.equal((await request('/api/teacher/lesson',{lessonVersion:'short'},joined.cookie)).status,401);
+  assert.equal((await request('/api/teacher/lesson',{lessonVersion:'invalid'},teacher)).status,400);
+  const live=await openStream(joined.cookie);
+  const selected=await request('/api/teacher/lesson',{lessonVersion:'short'},teacher);
+  assert.equal(selected.status,200); assert.equal(selected.data.lessonLocked,false);
+  const event=await live.waitFor(frame=>frame.startsWith('event: reveal') && dataOf(frame).lessonVersion==='short','selected lesson version');
+  assert.equal(dataOf(event).lessonLocked,false);
+  assert.equal(store.lessonSettings().lessonVersion,'short');
+  assert.equal((await request('/api/me',undefined,joined.cookie)).data.lessonVersion,'short');
+  assert.equal((await joinTeam(made.code,'Late Reader')).data.lessonVersion,'short');
+  // A new HTTP instance uses the same persisted setting.
+  assert.equal((await request('/api/me',undefined,teacher,{base:proxiedBase})).data.lessonVersion,'short');
+  const act=async action=>{const res=await request('/api/team/action',action,joined.cookie);assert.equal(res.status,200,JSON.stringify(res.data));return res.data.team;};
+  await act({type:'chip',key:'beliefs',value:'river'});
+  await act({type:'chip',key:'beliefs',value:'river',on:false});
+  assert.equal(store.lessonSettings().lessonLocked,true,'undoing work must not unlock the lesson');
+  await act({type:'chip',key:'beliefs',value:'river'});
+  const locked=await request('/api/teacher/lesson',{lessonVersion:'full'},teacher);
+  assert.equal(locked.status,409); assert.equal(locked.data.code,'lessonLocked');
+  assert.equal((await request('/api/teacher/lesson',{lessonVersion:'short'},teacher)).status,200);
+  await act({type:'pick',tree:'tech',id:'pottery'});await act({type:'pick',tree:'civic',id:'laws'});
+  dice.push(1,1);await act({type:'eventRoll',confirm:{tech:['pottery'],civic:['laws']}});
+  assert.equal((await request('/api/team/submit',{},joined.cookie)).status,400);
+  for(const key of ['civName','eventAnswer','geographyAnswer','governmentAnswer','economyAnswer'])await act({type:'field',key,value:'Specific reasoning.'});
+  await act({type:'chip',key:'government',value:'council'});await act({type:'chip',key:'economy',value:'farming',on:true});
+  const submitted=await request('/api/team/submit',{},joined.cookie);assert.equal(submitted.status,200,JSON.stringify(submitted.data));
+  assert.equal(submitted.data.team.state.beliefAnswer,'');assert.equal(submitted.data.team.state.reflection.submittedAt,null);
+  await request('/api/teacher/reveal',{reveal:true},teacher);
+  assert.equal((await request('/api/team/action',{type:'reflectionAnswer',key:'historyDifferenceAnswer',value:'Not required.'},joined.cookie)).data.code,'reflectionDisabled');
+  assert.equal((await request('/api/team/reflection/submit',{expectedVersion:submitted.data.team.version},joined.cookie)).data.code,'reflectionDisabled');
+  // Reconnect gets the selected version and lock even if it missed the change.
+  assert.equal((await request('/api/me',undefined,joined.cookie)).data.lessonLocked,true);
+  live.controller.abort();store.deleteTeam(made.id);
+  assert.equal((await request('/api/teacher/lesson',{lessonVersion:'full'},teacher)).status,200);
+  store.setReveal(false);
 });

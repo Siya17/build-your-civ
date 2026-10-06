@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { lessonStarted, validLessonVersion } from '../shared/lesson.js';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync, constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
@@ -110,6 +111,7 @@ const statements = {
   insertLog: db.prepare('INSERT INTO activity_log (team_id,actor,action_type) VALUES (?,?,?)'),
   recentLog: db.prepare('SELECT actor,action_type,created_at FROM activity_log WHERE team_id=? ORDER BY id DESC LIMIT ?'),
   logCounts: db.prepare('SELECT actor,COUNT(*) AS total FROM activity_log WHERE team_id=? GROUP BY actor ORDER BY total DESC, actor'),
+  studentWork: db.prepare("SELECT 1 FROM activity_log WHERE team_id=? AND action_type NOT IN ('rename','reopen','reflectionReopen') LIMIT 1"),
 };
 
 statements.expireSessions.run(Date.now());
@@ -209,6 +211,7 @@ export function updateTeam(id, action, actor, rollDie = () => randomInt(1, 7)) {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
     if (action.type === 'reflectionAnswer') {
+      if (lessonSettings().lessonVersion === 'short') throw Object.assign(new Error('Historical reflection is a class discussion in this version.'), {code:'reflectionDisabled'});
       if (!row.submitted_at) throw Object.assign(new Error('Submit your civilization before writing the historical reflection.'), {code:'reflectionNeedsSubmission'});
       if (!revealOpen()) throw Object.assign(new Error('Your teacher has closed the historical comparison. Your draft is still here.'), {code:'reflectionClosed'});
     } else if (row.submitted_at) throw Object.assign(new Error('This team has already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
@@ -226,7 +229,7 @@ export function submitTeam(id, actor) {
     const row = statements.teamById.get(id);
     if (!row) throw new Error('Team not found');
     if (row.submitted_at) throw Object.assign(new Error('Already submitted. Ask the teacher to reopen it.'), {code:'submitted'});
-    const gaps = submissionGaps(normalizeState(savedState(row)));
+    const gaps = submissionGaps(normalizeState(savedState(row)), lessonSettings().lessonVersion);
     if (gaps.length) { const error = new Error('Complete the required sections before submitting'); error.gaps=gaps; throw error; }
     statements.markSubmitted.run(id);
     statements.insertLog.run(id,actor,'submit');
@@ -251,6 +254,7 @@ export function reopenTeam(id) {
 }
 
 export function submitReflection(id, actor, expectedVersion) {
+  if (lessonSettings().lessonVersion === 'short') throw Object.assign(new Error('Historical reflection is a class discussion in this version.'), {code:'reflectionDisabled'});
   preserveBeforeWrite(id);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -288,6 +292,21 @@ export function reopenReflection(id) {
 // The teacher opens "what really happened" for the whole class at once.
 export function revealOpen() { return statements.getSetting.get('reveal')?.value === '1'; }
 export function setReveal(open) { statements.putSetting.run('reveal', open ? '1' : '0'); return revealOpen(); }
+
+export function lessonSettings() {
+  return {lessonVersion:statements.getSetting.get('lesson_version')?.value === 'short' ? 'short' : 'full', lessonLocked:listTeams().some(team => lessonStarted(team) || !!statements.studentWork.get(team.id))};
+}
+export function setLessonVersion(version) {
+  if (!validLessonVersion(version)) throw new Error('Invalid activity version');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const settings = lessonSettings();
+    if (settings.lessonLocked && version !== settings.lessonVersion) throw Object.assign(new Error('The activity version is locked because team work has started.'), {status:409,code:'lessonLocked'});
+    statements.putSetting.run('lesson_version',version);
+    db.exec('COMMIT');
+    return lessonSettings();
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
 
 // Everyone who signed in with this team's code and still holds a valid session.
 // This is an attendance list, not a presence list: a student who closed the tab

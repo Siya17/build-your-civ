@@ -4,6 +4,7 @@
 // Each team rolls two dice for one of twelve events; after it the trees are locked.
 // Dice are never rolled here unless the caller passes `rollDie` (the server does).
 import { tech, civic, trees, treeIds, cardById, treeOf, childrenOf, parentsMet, missingParents, prerequisiteIds } from './cards.js';
+import { lessonProfile, beliefExplanationRequired } from './lesson.js';
 import { regions, points } from './regions.js';
 
 export { trees, treeIds, cardById, treeOf, points, parentsMet, missingParents, prerequisiteIds };
@@ -58,6 +59,13 @@ export const priceOf = (point, id) => regions[point]?.prices?.[id]?.[0] ?? 'norm
 export const reasonOf = (point, id) => regions[point]?.prices?.[id]?.[1] ?? null;
 const points4 = { free:0, normal:1, hard:2, impossible:null };
 export const costOf = (point, id) => points4[priceOf(point, id)];
+// How many easy and difficult marks a team may place: exactly as many as its region rates.
+// Unavailable developments count as difficult, as they do when predictions are compared.
+export function markQuota(point) {
+  const quota = { easy:0, hard:0 };
+  for (const [price] of Object.values(regions[point]?.prices ?? {})) quota[price === 'free' ? 'easy' : 'hard']++;
+  return quota;
+}
 
 // ---- Errors -------------------------------------------------------------------------
 // Each refusal has a code the page can translate, and a plain English message for the API.
@@ -92,6 +100,7 @@ export const errorText = {
   badAction:'This action is not possible.',
   noRoll:'This card does not need a roll.',
   badDie:'The die gave an invalid number.',
+  markLimit:'Your team has used all of these marks. Tap a marked development to free one.',
   reflectionSubmitted:'Your historical reflection has already been submitted.'
 };
 function fail(code, status = 400) { return Object.assign(new Error(errorText[code] || code), { code, status }); }
@@ -378,6 +387,10 @@ export function applyAction(previous, action, { rollDie } = {}) {
     state.reflection[action.key] = action.value.replace(/\r/g,'');
   } else if (type === 'predict') {
     if (!Object.hasOwn(cardById, action.id)) throw fail('unknownCard');
+    if (predictionMarks.includes(action.mark) && state.predictions[action.id] !== action.mark) {
+      const used = Object.values(state.predictions).filter(mark => mark === action.mark).length;
+      if (used >= markQuota(state.mapPoint)[action.mark]) throw fail('markLimit');
+    }
     // Unmarked means normal, so a 'normal' mark is stored as no mark.
     if (action.mark === '' || action.mark === 'normal') delete state.predictions[action.id];
     else if (predictionMarks.includes(action.mark)) state.predictions[action.id] = action.mark;
@@ -423,7 +436,7 @@ export function needsDie(state, action) {
 }
 
 // Required before the team can submit. Historical reflection is a later submission.
-export function submissionGaps(raw) {
+export function submissionGaps(raw, version = 'full') {
   const state = normalizeState(raw);
   const gaps = [];
   if (!state.mapPoint) gaps.push('region');
@@ -434,11 +447,13 @@ export function submissionGaps(raw) {
   } else if (!eventPlan(state).resolved) gaps.push('eventResolved');
   if (!state.civName.trim()) gaps.push('civName');
   for (const key of textFields) {
+    if (!lessonProfile(version).answers.includes(key) && !(key === 'beliefAnswer' && beliefExplanationRequired(state, version))) continue;
     if (key === 'governmentAnswer' && !choicesValid(state,'government')) gaps.push('government');
     if (key === 'economyAnswer' && !choicesValid(state,'economy')) gaps.push('economy');
     if (key === 'beliefAnswer' && !choicesValid(state,'beliefs')) gaps.push('beliefs');
     if (!state[key].trim()) gaps.push(key);
   }
+  if (!choicesValid(state,'beliefs') && !gaps.includes('beliefs')) gaps.push('beliefs');
   return gaps;
 }
 

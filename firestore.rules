@@ -17,6 +17,7 @@ service cloud.firestore {
       allow read: if teacher() || (ownTeam(id) && exists(/databases/$(database)/documents/classrooms/main/teams/$(id)));
     }
     match /classrooms/main/settings/reveal { allow read: if live(); }
+    match /classrooms/main/settings/lesson { allow read: if live(); }
     match /classrooms/main/sessions/{uid} {
       // A user can observe deletion of their own session to handle logout promptly.
       allow read: if request.auth != null && request.auth.uid == uid;

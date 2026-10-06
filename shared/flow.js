@@ -2,6 +2,8 @@
 // remembered on this device; "team" steps are done when the shared team state says so.
 import { eventPlan, textFields, treeIssues, writableFields, choicesValid, reflectionFields } from './game.js';
 
+import { lessonProfile, shortLesson, beliefExplanationRequired } from './lesson.js';
+
 export const chapters = ['start','place','tech','civic','event','talk','present','reveal'];
 export const steps = [
   ['intro1','start','seen'], ['intro2','start','seen'],
@@ -12,7 +14,7 @@ export const steps = [
   ['eventRoll','event','team'], ['eventCard','event','seen'], ['eventResolve','event','team'], ['eventResult','event','seen'], ['eventAnswer','event','team'],
   ['civName','talk','team'], ['geographyAnswer','talk','team'], ['government','talk','team'], ['economy','talk','team'], ['beliefs','talk','team'],
   ['shapeAnswer','talk','team'], ['notChosenAnswer','talk','team'], ['check','talk','seen'], ['submit','talk','team'],
-  ['poster','present','seen'], ['wait','present','team'],
+  ['poster','present','seen'], ['wait','present','team'], ['shortComplete','present','seen'],
   ['revealPlace','reveal','seen'], ['revealCompare','reveal','seen'], ['historyDifferenceAnswer','reveal','team'], ['historyWorkAnswer','reveal','team'], ['historyOmissionAnswer','reveal','team'], ['reflectionReview','reveal','seen'], ['reflectionSubmit','reveal','team'], ['takeaway','reveal','seen']
 ].map(([id, chapter, kind]) => ({ id, chapter, kind }));
 export const stepById = Object.fromEntries(steps.map(step => [step.id, step]));
@@ -38,7 +40,7 @@ export function teamMilestones(team) {
     geographyAnswer:filled(state, 'geographyAnswer'),
     government:choicesValid(state,'government') && filled(state, 'governmentAnswer'),
     economy:choicesValid(state,'economy') && filled(state, 'economyAnswer'),
-    beliefs:choicesValid(state,'beliefs') && filled(state, 'beliefAnswer'),
+    beliefs:choicesValid(state,'beliefs') && (!beliefExplanationRequired(state,team.lessonVersion) || filled(state, 'beliefAnswer')),
     shapeAnswer:filled(state, 'shapeAnswer'),
     notChosenAnswer:filled(state, 'notChosenAnswer'),
     submitted:!!team.submittedAt,
@@ -48,6 +50,8 @@ export function teamMilestones(team) {
 // Steps that do not apply to this team are skipped entirely.
 export function stepApplies(id, team) {
   const state = team.state;
+  if (lessonProfile(team.lessonVersion).omittedSteps.includes(id)) return false;
+  if (id === 'shortComplete') return shortLesson(team);
   if (id === 'choosePlace') return !state.fixedPoint;
   if (['eventCard','eventResult','eventResolve'].includes(id) && !state.event) return false;
   if (id === 'eventResolve') {
@@ -80,9 +84,9 @@ export function stepDone(id, team, seen = new Set(), reveal = false) {
     case 'civName': return filled(state, 'civName');
     case 'government': return choicesValid(state,'government') && filled(state, 'governmentAnswer');
     case 'economy': return choicesValid(state,'economy') && filled(state, 'economyAnswer');
-    case 'beliefs': return choicesValid(state,'beliefs') && filled(state, 'beliefAnswer');
+    case 'beliefs': return choicesValid(state,'beliefs') && (!beliefExplanationRequired(state,team.lessonVersion) || filled(state, 'beliefAnswer'));
     case 'submit': return !!team.submittedAt;
-    case 'wait': return !!reveal;
+    case 'wait': return shortLesson(team) ? !!team.submittedAt : !!reveal;
     case 'reflectionSubmit': return !!state.reflection?.submittedAt;
   }
   if (reflectionFields.includes(id)) return !!state.reflection?.[id]?.trim();

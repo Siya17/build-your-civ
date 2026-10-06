@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { lessonStarted, validLessonVersion } from '../shared/lesson.js';
 import { applyAction, codeTag, initialState, isCodeShape, isPoint, normalizeCode, normalizeState, points, submissionGaps, reflectionGaps } from '../shared/game.js';
 
 // Every mutation reads and writes a team in a Firestore transaction. A retry must
@@ -7,6 +8,23 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
   const root = db.doc('classrooms/main');
   const teams = root.collection('teams'), sessions = root.collection('sessions');
   const codes = root.collection('codes'), presences = root.collection('presence');
+  const lessonRef = root.collection('settings').doc('lesson');
+  const lessonData = snap => ({lessonVersion:snap.data()?.lessonVersion === 'short' ? 'short' : 'full'});
+  const started = data => data.lessonStarted || lessonStarted({...rowTeam(data),activityCounts:data.activityCounts});
+  async function lessonSettings() {
+    return {...lessonData(await lessonRef.get()),lessonLocked:(await teams.get()).docs.some(doc => started(doc.data()))};
+  }
+  async function setLessonVersion(version) {
+    if (!validLessonVersion(version)) throw error('Invalid activity version');
+    return db.runTransaction(async tx => {
+      const current = lessonData(await tx.get(lessonRef));
+      const all = await tx.get(teams), lessonLocked = all.docs.some(doc => started(doc.data()));
+      if (lessonLocked && version !== current.lessonVersion) throw error('The activity version is locked because team work has started.',409,'lessonLocked');
+      const settings = {lessonVersion:version,lessonLocked};
+      tx.set(lessonRef,settings);
+      return settings;
+    });
+  }
   const hash = value => createHmac('sha256', secret).update(value).digest('hex');
   const teamRef = id => teams.doc(String(id));
   const stamp = () => new Date(now()).toISOString();
@@ -56,7 +74,10 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
     return db.runTransaction(async tx => {
       const snap=await tx.get(ref); if (!snap.exists) throw error('Team not found',404);
       const data=snap.data(); data.state=normalizeState(data.state);
-      await change(data,tx);
+      const lesson = await tx.get(lessonRef);
+      await change(data,tx,lessonData(lesson).lessonVersion);
+      if (!['rename','reopen','reflectionReopen'].includes(type)) data.lessonStarted=true;
+      if (started(data) && !lesson.data()?.lessonLocked) tx.set(lessonRef,{...lessonData(lesson),lessonLocked:true});
       data.version++; data.updatedAt=stamp(); data.lastActor=actor;
       data.activityCounts ||= {};
       data.activityCounts={...data.activityCounts,[actor]:(Object.hasOwn(data.activityCounts,actor)?data.activityCounts[actor]:0)+1};
@@ -67,9 +88,10 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
   async function updateTeam(id,action,actor,rollDie=()=>randomInt(1,7)) {
     // Firestore can rerun the callback. Keep sampled faces stable across retries.
     const rolls=[];let cursor=0;
-    return mutate(id,actor,action.type,async(data,tx)=>{
+    return mutate(id,actor,action.type,async(data,tx,version)=>{
       cursor=0;
       if (action.type==='reflectionAnswer') {
+        if (version === 'short') throw error('Historical reflection is a class discussion in this version.',400,'reflectionDisabled');
         if (!data.submittedAt) throw error('Submit your civilization before writing the historical reflection.',400,'reflectionNeedsSubmission');
         if (!(await tx.get(root.collection('settings').doc('reveal'))).data()?.reveal) throw error('Your teacher has closed the historical comparison. Your draft is still here.',400,'reflectionClosed');
       } else if (data.submittedAt) throw error('This team has already submitted. Ask the teacher to reopen it.',400,'submitted');
@@ -78,14 +100,15 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
     });
   }
   async function submitTeam(id,actor) {
-    return mutate(id,actor,'submit',data=>{
+    return mutate(id,actor,'submit',(data,tx,version)=>{
       if (data.submittedAt) throw error('Already submitted. Ask the teacher to reopen it.',400,'submitted');
-      const gaps=submissionGaps(data.state);if(gaps.length)throw Object.assign(error('Complete the required sections before submitting'),{gaps});
+      const gaps=submissionGaps(data.state,version);if(gaps.length)throw Object.assign(error('Complete the required sections before submitting'),{gaps});
       data.submittedAt=stamp();
     });
   }
   async function submitReflection(id,actor,expectedVersion) {
-    return mutate(id,actor,'reflectionSubmit',async(data,tx)=>{
+    return mutate(id,actor,'reflectionSubmit',async(data,tx,version)=>{
+      if (version === 'short') throw error('Historical reflection is a class discussion in this version.',400,'reflectionDisabled');
       if (!data.submittedAt) throw error('Submit your civilization first.',400,'reflectionNeedsSubmission');
       if (!(await tx.get(root.collection('settings').doc('reveal'))).data()?.reveal) throw error('The historical comparison is closed.',400,'reflectionClosed');
       if(data.state.reflection.submittedAt)throw error('The historical reflection has already been submitted.',409,'reflectionSubmitted');
@@ -98,6 +121,8 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
     // Removing the team immediately denies its students in the API and Rules.
     await db.runTransaction(async tx=>{
       const ref=teamRef(id),snap=await tx.get(ref);if(!snap.exists)throw error('Team not found',404);
+      const lesson = await tx.get(lessonRef), all = await tx.get(teams);
+      tx.set(lessonRef,{...lessonData(lesson),lessonLocked:all.docs.some(doc => doc.data().id !== id && started(doc.data()))});
       tx.delete(ref);tx.delete(codes.doc(snap.data().codeHash));tx.delete(presences.doc(String(id)));
     });
     // Firestore document deletion does not delete subcollections.
@@ -160,6 +185,7 @@ export function createFirestoreStore(db, {secret, now = Date.now}) {
     });
   }
   return {
+    lessonSettings,setLessonVersion,
     createTeam,getTeam,listTeams,updateTeam,submitTeam,submitReflection,deleteTeam,regenerateCode,getSession,createSession,deleteSession,
     seedLetterTeams:()=>letterTeams(true),addLetterTeams:()=>letterTeams(false),
     sessionId:hash,setPresence,clearPresence,loginAllowed,

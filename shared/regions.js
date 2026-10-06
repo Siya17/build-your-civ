@@ -34,6 +34,8 @@ export const regions = {
       mining:['free',{ en:'Gold and iron ore lie close to the surface.', ja:'金や鉄の{鉱石|こうせき}が、地面の近くにあります。' }],
       masonry:['free',{ en:'Granite hills break naturally into flat, easy-to-use slabs.', ja:'花崗岩の丘は自然に割れて、使いやすい平らな石になります。' }],
       sailing:['hard',{ en:'The sea is far away, and the rivers have rocks and rapids.', ja:'海は遠く、川には岩や急な流れがあります。' }],
+      irrigation:['hard',{ en:'Rain often fails, and the rivers lie in low valleys below the high fields.', ja:'雨が降らない年が多く、川は高い畑より低い谷を流れています。' }],
+      wheel:['hard',{ en:'Tsetse flies in the low valleys make cattle sick, so few animals can pull carts.', ja:'低い谷ではツェツェバエが牛を病気にするので、{荷車|にぐるま}を引ける動物が少ないです。' }],
       horseback:['impossible',{ en:'No horses have reached southern Africa. Tsetse flies in the lowlands around the plateau carry a disease that kills them.', ja:'アフリカ南部には、まだ馬が伝わっていません。高原の周りの低地では、ツェツェバエがうつす病気で馬が死んでしまいます。' }]
     },
     events:{
@@ -79,6 +81,7 @@ export const regions = {
       sailing:['free',{ en:'The islands lie close together, and summer is a good season for sailing.', ja:'島どうしが近く、夏は船で動きやすい季節です。' }],
       husbandry:['free',{ en:'Sheep and goats live well on dry, rocky hills.', ja:'羊やヤギは、かわいた岩の丘でもよく育ちます。' }],
       trade:['free',{ en:'The sea links many coasts, and each one has different goods.', ja:'海が多くの海岸を結び、それぞれの場所にちがう品物があります。' }],
+      masonry:['free',{ en:'Marble and other good stone lie on many islands.', ja:'多くの島に、{大理石|だいりせき}などのよい石があります。' }],
       irrigation:['hard',{ en:'There are few rivers, and summers are dry.', ja:'川が少なく、夏は雨が降りません。' }],
       horseback:['hard',{ en:'Steep mountains and little grass make horses hard to keep.', ja:'山が急で草が少ないので、馬を育てるのは大変です。' }],
       wheel:['hard',{ en:'Steep, rocky paths make carts hard to use.', ja:'急で岩の多い道では、{荷車|にぐるま}は使いにくいです。' }],
@@ -127,8 +130,11 @@ export const regions = {
       irrigation:['free',{ en:'Two rivers cross a flat plain, so canals are easy to dig.', ja:'平らな土地を二つの川が流れるので、水路を{掘|ほ}りやすいです。' }],
       pottery:['free',{ en:'River clay is everywhere.', ja:'川の粘土がどこにでもあります。' }],
       trade:['free',{ en:'People must trade for stone, wood and metal.', ja:'石・木・金属は、交易で手に入れるしかありません。' }],
+      writing:['free',{ en:'Soft clay is everywhere. People can press signs into it and keep the tablets.', ja:'やわらかい粘土がどこにでもあります。しるしを押しつけて書き、粘土板として残せます。' }],
       mining:['hard',{ en:'The plain has no metal ore and almost no stone.', ja:'平野には金属の{鉱石|こうせき}がなく、石もほとんどありません。' }],
-      masonry:['hard',{ en:'Builders have mud and reeds, but almost no stone.', ja:'泥と葦はあっても、石はほとんどありません。' }]
+      masonry:['hard',{ en:'Builders have mud and reeds, but almost no stone.', ja:'泥と葦はあっても、石はほとんどありません。' }],
+      shipbuilding:['hard',{ en:'There are almost no tall trees. Boats are made of reeds or of wood from far away.', ja:'高い木がほとんどありません。船は葦で作るか、遠くから運んだ木で作ります。' }],
+      bronze:['hard',{ en:'There is no copper or tin here. All metal must come from far away.', ja:'ここには銅もスズもありません。金属はすべて遠くから運ぶ必要があります。' }]
     },
     events:{
       1:{ en:'The rivers run low, and the canals are dry.', ja:'川の水がへり、水路がかわいてしまいます。' },
@@ -173,8 +179,10 @@ export const regions = {
       irrigation:['free',{ en:'Summer floods spread water and rich mud over the fields.', ja:'夏の洪水が、畑に水と{栄養|えいよう}のある泥を運びます。' }],
       pottery:['free',{ en:'Good clay is everywhere, and it bakes into strong bricks.', ja:'よい粘土がどこにでもあり、焼くと{丈夫|じょうぶ}なれんがになります。' }],
       sailing:['free',{ en:'Boats can follow the river to the sea, then sail along the coast to the west.', ja:'船で川を下って海に出て、西の海岸に行けます。' }],
+      craft:['free',{ en:'Bright stones, shells and cotton give skilled workers fine materials.', ja:'色あざやかな石・貝・綿が、職人によい材料をあたえます。' }],
       horseback:['hard',{ en:'No wild horses live here. They must come from far away.', ja:'ここには野生の馬がいません。遠くから連れて来る必要があります。' }],
-      masonry:['hard',{ en:'The river plain has little stone, so people bake bricks instead.', ja:'平野には石が少ないので、かわりにれんがを焼きます。' }]
+      masonry:['hard',{ en:'The river plain has little stone, so people bake bricks instead.', ja:'平野には石が少ないので、かわりにれんがを焼きます。' }],
+      mining:['hard',{ en:'The plain is river mud. Metal ores and hard stone lie in distant hills.', ja:'平野は川の泥でできています。金属の{鉱石|こうせき}やかたい石は、遠くの丘にあります。' }]
     },
     events:{
       1:{ en:'The monsoon is weak. The river stays low all summer.', ja:'モンスーンが弱く、夏の間ずっと川の水が少ないです。' },
@@ -218,7 +226,10 @@ export const regions = {
     prices:{
       irrigation:['free',{ en:'Heavy monsoon rain can be stored in big [[reservoir|reservoirs]] and channels.', ja:'モンスーンの大雨を、大きな[[reservoir|{貯水池|ちょすいち}]]や水路にためられます。' }],
       sailing:['free',{ en:'Rivers and a huge lake connect the land. In the wet season, boats go almost everywhere.', ja:'川と大きな湖が土地を結んでいます。雨季には、船でほとんどどこへでも行けます。' }],
-      horseback:['hard',{ en:'Hot, wet forests and floods are hard for horses. Elephants work better here.', ja:'暑くしめった森や洪水は、馬には大変です。ここでは{象|ぞう}のほうが役に立ちます。' }]
+      pottery:['free',{ en:'The river and lake shores give good clay for pots.', ja:'川や湖の岸に、つぼを作るためのよい粘土があります。' }],
+      horseback:['hard',{ en:'Hot, wet forests and floods are hard for horses. Elephants work better here.', ja:'暑くしめった森や洪水は、馬には大変です。ここでは{象|ぞう}のほうが役に立ちます。' }],
+      wheel:['hard',{ en:'Floods cover the land for months, and paths turn to deep mud.', ja:'洪水が何か月も土地をおおい、道は深い泥になります。' }],
+      mining:['hard',{ en:'The lowland is river mud. Metal ores lie in distant hills.', ja:'低地は川の泥でできています。金属の{鉱石|こうせき}は遠くの丘にあります。' }]
     },
     events:{
       1:{ en:'The monsoon comes late. The ponds and canals dry out.', ja:'モンスーンがおくれ、池も水路もかわいてしまいます。' },
@@ -262,7 +273,10 @@ export const regions = {
     prices:{
       pottery:['free',{ en:'Fine loess and river clays are easy to dig and shape.', ja:'細かい黄土と川の粘土は、掘りやすく形を作りやすいです。' }],
       husbandry:['free',{ en:'Wild boar live along the river, and pigs were tamed here very early. Millet farms can also feed pigs and dogs.', ja:'川沿いにはイノシシがいて、ここではとても早くからブタが飼われました。キビやアワの畑は、ブタやイヌのえさにもなります。' }],
-      sailing:['hard',{ en:'The river is shallow, full of mud, and often changes its path.', ja:'川は浅く、泥が多く、流れる道がよく変わります。' }]
+      craft:['free',{ en:'Silkworms and fine clay give skilled workers special materials.', ja:'カイコとよい粘土が、職人に特別な材料をあたえます。' }],
+      sailing:['hard',{ en:'The river is shallow, full of mud, and often changes its path.', ja:'川は浅く、泥が多く、流れる道がよく変わります。' }],
+      irrigation:['hard',{ en:'The river carries so much yellow mud that canals fill up quickly.', ja:'川は黄色い泥をたくさん運ぶので、水路はすぐにうまってしまいます。' }],
+      shipbuilding:['hard',{ en:'The shallow, muddy river is dangerous for large boats.', ja:'浅く泥の多い川は、大きな船には危険です。' }]
     },
     events:{
       1:{ en:'Little rain falls. Dust storms blow across the fields.', ja:'雨がほとんど降らず、畑に砂ぼこりの嵐がふきます。' },
@@ -307,7 +321,11 @@ export const regions = {
     prices:{
       irrigation:['free',{ en:'Seasonal river water supports cultivation. Channels, timing and maintenance help use floods whose height varies between years.', ja:'季節の川の水は耕作を支えます。年によって違う洪水を利用するには、水路・時期の判断・維持が役立ちます。' }],
       sailing:['free',{ en:'The river flows north, and the wind blows south. Boats can go both ways.', ja:'川は北へ流れ、風は南へふきます。船はどちらの方向にも進めます。' }],
-      horseback:['hard',{ en:'No horses live here, and the narrow valley has little grass for them.', ja:'ここには馬がいません。せまい谷には、馬のための草も少ないです。' }]
+      masonry:['free',{ en:'Limestone, sandstone and granite cliffs line the valley.', ja:'谷の両側に、{石灰岩|せっかいがん}・{砂岩|さがん}・{花崗岩|かこうがん}のがけがあります。' }],
+      writing:['free',{ en:'Papyrus reeds can be made into a light, smooth surface for writing.', ja:'パピルスという草から、軽くてなめらかな書く材料を作れます。' }],
+      horseback:['hard',{ en:'No horses live here, and the narrow valley has little grass for them.', ja:'ここには馬がいません。せまい谷には、馬のための草も少ないです。' }],
+      shipbuilding:['hard',{ en:'Few large trees grow here. Long timber must come from far away.', ja:'大きな木はほとんど育ちません。長い木材は遠くから運ぶ必要があります。' }],
+      iron:['hard',{ en:'There is little wood to make charcoal for hot iron furnaces.', ja:'鉄を作る高温の炉のための炭にする木が、少ししかありません。' }]
     },
     events:{
       1:{ en:'The Nile flood is too low. The fields stay dry.', ja:'ナイル川の洪水が少なすぎて、畑がかわいたままです。' },
@@ -352,7 +370,9 @@ export const regions = {
       irrigation:['free',{ en:'Lava stone and wetlands make water channels easy to build – for eels, not for crops.', ja:'溶岩の石と湿地で、水路が作りやすいです。作物のためではなく、ウナギのためです。' }],
       masonry:['free',{ en:'Volcanic stone lies everywhere on the lava plain.', ja:'溶岩の平野には、どこにでも火山の石があります。' }],
       husbandry:['impossible',{ en:'No local animals can be herded. Kangaroos and emus cannot be tamed like cattle.', ja:'群れで飼える動物がいません。カンガルーやエミューは、牛のように飼いならせません。' }],
-      horseback:['impossible',{ en:'There are no horses in Australia.', ja:'オーストラリアには馬がいません。' }]
+      craft:['free',{ en:'Volcanic stone and wetland plants are good materials for eel traps and stone houses.', ja:'火山の石と湿地の植物は、ウナギのわなや石の家のよい材料になります。' }],
+      horseback:['impossible',{ en:'There are no horses in Australia.', ja:'オーストラリアには馬がいません。' }],
+      wheel:['hard',{ en:'No animals can pull carts, and the lava plain is rough and rocky.', ja:'荷車を引く動物がいません。溶岩の平野も、でこぼこで岩が多いです。' }]
     },
     events:{
       1:{ en:'A long, dry summer. The wetlands shrink.', ja:'かわいた夏が長く続き、湿地が小さくなります。' },
@@ -396,6 +416,7 @@ export const regions = {
     prices:{
       mining:['free',{ en:'Volcanoes give obsidian, a black glass for very sharp tools.', ja:'火山から、鋭い道具になる黒曜石がとれます。' }],
       masonry:['free',{ en:'Soft limestone and volcanic stone are easy to cut.', ja:'やわらかい石灰岩や火山の石は、切りやすいです。' }],
+      craft:['free',{ en:'Obsidian and fine clay give skilled workers good materials.', ja:'黒曜石とよい粘土が、職人によい材料をあたえます。' }],
       husbandry:['hard',{ en:'Only turkeys and dogs can be kept. There are no large farm animals.', ja:'飼えるのは{七面鳥|しちめんちょう}と犬だけで、大きな{家畜|かちく}はいません。' }],
       wheel:['hard',{ en:'No animals can pull carts, and the land is steep or covered in forest.', ja:'荷車を引く動物がいません。土地も急な山や森です。' }],
       horseback:['impossible',{ en:'At this time, no horses live in the Americas.', ja:'この時代、アメリカ大陸には馬がいません。' }]
@@ -444,7 +465,8 @@ export const regions = {
       irrigation:['free',{ en:'The coast is a desert, but rivers flow down from the Andes. Canals can carry their water to fields in the valleys.', ja:'海岸は砂漠ですが、アンデスから川が流れてきます。水路で、その水を谷の畑へ運べます。' }],
       masonry:['free',{ en:'Hard stone is everywhere in the mountains.', ja:'山には、かたい石がどこにでもあります。' }],
       wheel:['hard',{ en:'The slopes are very steep, and no animal is big enough to pull a cart.', ja:'斜面はとても急で、荷車を引けるほど大きな動物もいません。' }],
-      horseback:['impossible',{ en:'There are no horses in the Americas, and llamas are too small to ride.', ja:'アメリカ大陸には馬がいません。リャマは小さすぎて乗れません。' }]
+      horseback:['impossible',{ en:'There are no horses in the Americas, and llamas are too small to ride.', ja:'アメリカ大陸には馬がいません。リャマは小さすぎて乗れません。' }],
+      construction:['hard',{ en:'Earthquakes shake the land, and flat ground for big buildings is rare.', ja:'地震で土地がゆれ、大きな建物を建てる平らな土地も少ないです。' }]
     },
     events:{
       1:{ en:'The mountain rain fails, and the rivers on the coast shrink.', ja:'山に雨が降らず、海岸の川が細くなります。' },
@@ -488,13 +510,11 @@ export const regions = {
     prices:{
       sailing:['free',{ en:'Fjords and the sea are the only roads. Light boats of skin and bone work well.', ja:'フィヨルドと海だけが道です。皮と骨でできた軽い船がよく役に立ちます。' }],
       craft:['free',{ en:'Wood and metal are scarce, so people work bone, antler, skin, driftwood and soapstone with great skill.', ja:'木と金属が少ないので、人々は骨・角・皮・流木・{滑石|かっせき}をとても上手に加工します。' }],
-      pottery:['hard',{ en:'There is little clay, and almost no wood to fire a kiln.', ja:'粘土が少なく、焼くための木もほとんどありません。' }],
+      archery:['free',{ en:'Driftwood and antler can be made into bows, and caribou and seals are close by.', ja:'流木や角で弓を作れ、カリブーやアザラシも近くにいます。' }],
       husbandry:['hard',{ en:'Cows and sheep need hay for about seven months of winter.', ja:'牛や羊には、約7か月の冬の間、ほし草が必要です。' }],
       irrigation:['hard',{ en:'Summers are short and cool. Channels can water hayfields for animals, but they take a lot of work to dig and maintain.', ja:'夏は短くすずしいです。水路で家畜のための牧草地に水を引けますが、掘って維持するには多くの労働が必要です。' }],
-      mining:['hard',{ en:'Ice covers most of the land and its rocks.', ja:'土地と岩のほとんどが、氷におおわれています。' }],
       shipbuilding:['hard',{ en:'No trees grow big enough. Builders have only driftwood.', ja:'大きく育つ木がありません。使えるのは流木だけです。' }],
-      trade:['hard',{ en:'Europe is very far, and sea ice can block ships.', ja:'ヨーロッパはとても遠く、海氷が船の行く手をふさぎます。' }],
-      empire:['hard',{ en:'Very few people can live here, and homes are far apart.', ja:'ここでくらせる人はとても少なく、家どうしも遠く離れています。' }]
+      trade:['hard',{ en:'Europe is very far, and sea ice can block ships.', ja:'ヨーロッパはとても遠く、海氷が船の行く手をふさぎます。' }]
     },
     events:{
       1:{ en:'A dry, cold summer. The hay does not grow.', ja:'かわいた寒い夏で、ほし草用の草が育ちません。' },

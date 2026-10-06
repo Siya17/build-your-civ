@@ -1,8 +1,9 @@
 // One render function per student screen. Each screen has one task and one primary button.
 // The page (app.js) owns state and navigation; everything here only turns state into HTML.
+import { shortLesson } from '../shared/lesson.js';
 import { regions, worldMap } from '../shared/regions.js';
 import { trees, cardById, childrenOf } from '../shared/cards.js';
-import { priceOf, reasonOf, costOf, spent, statusOf, eventPlan, previewChoice, treeIssues, submissionGaps, fieldLimit, choiceOptions, cascadeOf, minimumCost, economyMax, BUDGET, points, eventId, reflectionFields, reflectionGaps, predictionMarks } from '../shared/game.js';
+import { priceOf, reasonOf, costOf, spent, statusOf, eventPlan, previewChoice, treeIssues, submissionGaps, fieldLimit, choiceOptions, cascadeOf, minimumCost, economyMax, BUDGET, points, eventId, reflectionFields, reflectionGaps, predictionMarks, markQuota } from '../shared/game.js';
 import { chapters, steps, stepById, stepDone, stepAvailable, neighbourStep, stepApplies, stepField, chapterOf, teamStarted } from '../shared/flow.js';
 import { gapKeys } from '../shared/i18n.js';
 import { esc, fmt, loc, rich, plain, cardName, cardPlain, btn, priceBadge, statusBadge, priceSymbol, photo, heroPath, dieMarkup, climateCharts, eventDiceText } from './ui.js';
@@ -28,7 +29,7 @@ function topbar(ctx) {
 }
 function progress(ctx) {
   const { L, team, seen, reveal, step } = ctx, current = chapterOf(step);
-  const items = chapters.map((chapter, i) => {
+  const items = chapters.filter(chapter=>steps.some(item=>item.chapter===chapter && stepApplies(item.id,team))).map((chapter, i) => {
     const first = steps.find(item => item.chapter === chapter && stepApplies(item.id, team));
     const reachable = first && stepAvailable(first.id, team, seen, reveal);
     const done = steps.filter(item => item.chapter === chapter && stepApplies(item.id, team)).every(item => stepDone(item.id, team, seen, reveal));
@@ -106,7 +107,7 @@ function writing(ctx, key, { extra = '', chips = '', hideLabel = false } = {}) {
   const question = key === 'eventAnswer' ? L[`eventAnswer_${eventPromptKind(state)}`] : L[key];
   const ideas = starters(key, state, lang), words = usefulWords(key, lang), left = fieldLimit(key) - value.length;
   return `${chips}${extra}<div class="answer">
-      <label for="field-${key}" class="answer-label${hideLabel ? ' sr-only' : ''}">${rich(question, lang)}</label><small class="presence" data-presence="${key}"></small>
+      <label for="field-${key}" class="answer-label${hideLabel ? ' sr-only' : ''}">${rich(question, lang)}</label><small class="presence" data-presence="${key}"></small>${shortLesson(team) && !reflection ? `<p class="hint">${rich(L.lessonShortAnswer,lang)}</p>` : ''}
       <textarea id="field-${key}" data-field="${key}" maxlength="${fieldLimit(key)}" rows="7" placeholder="${esc(plain(reflection?L.historyAnswerPh:L.answerPh))}" ${locked ? 'disabled' : ''}>${esc(value)}</textarea>
       <small class="count" data-count-for="${key}">${fmt(L.charsLeft, left)}</small></div>
     ${ideas.length ? `<aside class="ideas"><h2>${L.startersTitle}</h2><ul>${ideas.map(text => `<li>${esc(text)}</li>`).join('')}</ul>${words.length ? `<h3>${L.wordsTitle}</h3><p class="words">${words.map(word => `<span>${rich(word, lang)}</span>`).join('')}</p>` : ''}</aside>` : ''}`;
@@ -125,10 +126,10 @@ function chipGroup(ctx, group) {
 
 // ---- Screens --------------------------------------------------------------------------
 const screens = {
-  intro1(ctx) { const { L, lang } = ctx; return { title:rich(L.intro1Title, lang), body:`<div class="prose big">${lines(L.intro1Lines, lang)}</div><div class="hero-map small">${worldMapMarkup(ctx)}</div>`, primary:next(L, false, L.start), wide:true }; },
+  intro1(ctx) { const { L, lang } = ctx; return { title:rich(L.intro1Title, lang), body:`<div class="prose big">${lines(shortLesson(ctx.team)?L.lessonShortWelcome:L.intro1Lines, lang)}</div><div class="hero-map small">${worldMapMarkup(ctx)}</div>`, primary:next(L, false, L.start), wide:true }; },
   intro2(ctx) {
-    const { L, lang } = ctx, icons = ['🗺️','🃏','🎲','🎤'];
-    return { title:rich(L.intro2Title, lang), body:`<ol class="four-steps">${L.intro2Steps.map((text, i) => `<li><span class="step-icon" aria-hidden="true">${icons[i]}</span><span class="num">${i + 1}</span><p>${rich(text, lang)}</p></li>`).join('')}</ol>`, primary:next(L) };
+    const { L, lang, team } = ctx, icons = ['🗺️','🃏','🎲','🎤'];
+    return { title:rich(L.intro2Title, lang), body:`<ol class="four-steps">${(shortLesson(team)?L.lessonShortIntro:L.intro2Steps).map((text, i) => `<li><span class="step-icon" aria-hidden="true">${icons[i]}</span><span class="num">${i + 1}</span><p>${rich(text, lang)}</p></li>`).join('')}</ol>`, primary:next(L) };
   },
   intro3(ctx) {
     const { L, lang } = ctx;
@@ -143,8 +144,15 @@ const screens = {
   },
   where(ctx) {
     const { L, lang, team } = ctx, point = team.state.mapPoint, region = regions[point];
+    if(shortLesson(team)){
+      const detail = (title,body) => `<details class="lesson-details"><summary>${rich(title,lang)}</summary>${body}</details>`;
+      return {title:rich(L.lessonOverview,lang),lead:rich(region.tagline[lang],lang),wide:true,
+        body:`<h2>${point} · ${rich(region.name[lang],lang,{terms:false})}</h2><p>${rich(region.area[lang],lang,{terms:false})}</p>${regionalMap(region,lang)}<section class="prose"><h2>${L.climateTitle}</h2><p>${rich(region.climate.summary[lang],lang)}</p><h2>${L.resourcesTitle}</h2><ul>${region.resources.map(item=>`<li><strong>${rich(item[lang],lang)}</strong>: ${rich(item.text[lang],lang)}</li>`).join('')}</ul><h2>${L.challengeTitle}</h2><ul>${region.challenge[lang].map(text=>`<li>${rich(text,lang)}</li>`).join('')}</ul></section>
+        ${detail(L.landTitle,screens.land(ctx).body)}${detail(L.climateTitle,screens.climate(ctx).body)}${detail(L.resourcesTitle,screens.resources(ctx).body)}
+`,primary:next(L)};
+    }
     return { title:`<span class="letter-badge">${point}</span> ${rich(region.name[lang], lang, { terms:false })}`, lead:rich(region.tagline[lang], lang), wide:true,
-      body:`<p class="area">📍 ${rich(region.area[lang], lang, { terms:false })}</p>${regionalMap(region, lang)}<div class="where-stage still">${worldMapMarkup(ctx)}${photo(`${point}/hero.webp`, plain(region.name[lang]), { cls:'where-photo', eager:true, lang })}</div>`,
+      body:`<p class="area">📍 ${rich(region.area[lang], lang, { terms:false })}</p>${regionalMap(region, lang)}`,
       primary:next(L) };
   },
   land(ctx) {
@@ -169,14 +177,15 @@ const screens = {
     }
     const neutral = {...team.state,tech:[],civic:[]};
     return {title:rich(L.previewTitle,lang),lead:rich(L.previewLead,lang),wide:true,
-      body:['tech','civic'].map(tree=>`<section class="preview-tree"><h2>${rich(L[tree==='tech'?'previewTechTitle':'previewCivicTitle'],lang)}</h2>${treeMarkup(neutral,tree,lang,L,{compact,preview:true})}</section>`).join(''), primary:next(L)};
+      body:`<div class="prose preview-why">${lines(L.previewWhy,lang)}</div>`+['tech','civic'].map(tree=>`<section class="preview-tree"><h2>${rich(L[tree==='tech'?'previewTechTitle':'previewCivicTitle'],lang)}</h2>${treeMarkup(neutral,tree,lang,L,{compact,preview:true})}</section>`).join(''), primary:next(L)};
   },
   challenge(ctx) {
     const { L, lang, team } = ctx, point = team.state.mapPoint, region = regions[point];
     const { ui, compact } = ctx, tool = ui.markTool || 'easy', locked = !!team.submittedAt, neutral = { ...team.state, tech:[], civic:[] };
-    const tools = `<div class="mark-tools" role="group" aria-label="${esc(L.markTools)}">${predictionMarks.map(mark => `<button type="button" class="mark-tool m-${mark}" data-act="tool:${mark}" aria-pressed="${tool === mark}" ${locked ? 'disabled' : ''}>${esc(L[`mark_${mark}`])}</button>`).join('')}</div><p class="muted small">${rich(L.markHint, lang)}</p>`;
+    const quota = markQuota(point), used = mark => Object.values(team.state.predictions || {}).filter(value => value === mark).length;
+    const tools = `<div class="mark-tools" role="group" aria-label="${esc(L.markTools)}">${predictionMarks.map(mark => `<button type="button" class="mark-tool m-${mark}" data-act="tool:${mark}" aria-pressed="${tool === mark}" ${locked ? 'disabled' : ''}>${esc(L[`mark_${mark}`])} <span class="mark-count">${used(mark)}/${quota[mark]}</span></button>`).join('')}</div><p class="muted small">${rich(L.markHint, lang)}</p>`;
     const markTrees = ['tech','civic'].map(tree => `<section class="preview-tree"><h3>${rich(L[tree === 'tech' ? 'previewTechTitle' : 'previewCivicTitle'], lang)}</h3>${treeMarkup(neutral, tree, lang, L, { compact, mark:true, marks:team.state.predictions, locked })}</section>`).join('');
-    return { title:rich(L.challengeTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/challenge.webp`, plain(region.challenge[lang][0]), { eager:true })}<ul class="challenge-list">${region.challenge[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul></div><section class="mark-panel"><h2>🏷️ ${rich(L.markTitle, lang)}</h2><p>${rich(L.markLead, lang)}</p>${tools}${markTrees}</section>${notes(ctx, [['predictEasyNote', L.predictEasy], ['predictHardNote', L.predictHard]])}`, primary:next(L) };
+    return { title:rich(L.challengeTitle, lang), wide:true, body:`<div class="split">${photo(`${point}/challenge.webp`, plain(region.challenge[lang][0]), { eager:true })}<ul class="challenge-list">${region.challenge[lang].map(text => `<li>${rich(text, lang)}</li>`).join('')}</ul></div><section class="mark-panel"><h2>🏷️ ${rich(L.markTitle, lang)}</h2><p>${rich(L.markLead, lang)}</p><p class="mark-quota"><strong>${esc(fmt(L.markQuota, quota.easy, quota.hard))}</strong></p>${tools}${markTrees}</section>${notes(ctx, [['predictEasyNote', L.predictEasy], ['predictHardNote', L.predictHard]])}`, primary:next(L) };
   },
   prices(ctx) {
     const { L, lang, team } = ctx, predictions = team.state.predictions || {}, all = [...trees.tech, ...trees.civic];
@@ -250,7 +259,9 @@ const screens = {
   },
   government(ctx) { const { L, lang, team } = ctx; return { title:rich(L.governmentTitle, lang), lead:rich(L.governmentLead, lang), body:writing(ctx, 'governmentAnswer', { chips:chipGroup(ctx, 'government') }), primary:next(L, !stepDone('government', team)) }; },
   economy(ctx) { const { L, lang, team } = ctx; return { title:rich(L.economyTitle, lang), lead:rich(L.economyLead, lang), body:writing(ctx, 'economyAnswer', { chips:chipGroup(ctx, 'economy') }), primary:next(L, !stepDone('economy', team)) }; },
-  beliefs(ctx) { const { L, lang, team } = ctx; return { title:rich(L.beliefsTitle, lang), lead:rich(L.beliefsLead, lang), body:writing(ctx, 'beliefAnswer', { chips:chipGroup(ctx, 'beliefs') }), primary:next(L, !stepDone('beliefs', team)) }; },
+  beliefs(ctx) { const { L, lang, team } = ctx;
+    if(shortLesson(team))return {title:rich(L.beliefsTitle,lang),lead:rich(L.lessonShortBeliefs,lang),body:chipGroup(ctx,'beliefs')+(team.state.beliefs==='other'?`<div class="answer"><label for="field-beliefAnswer">${rich(L.lessonCustomBelief,lang)}</label><textarea id="field-beliefAnswer" data-field="beliefAnswer" maxlength="1200" rows="3" ${team.submittedAt?'disabled':''}>${esc(team.state.beliefAnswer)}</textarea></div>`:''),primary:next(L,!stepDone('beliefs',team))};
+    return { title:rich(L.beliefsTitle, lang), lead:rich(L.beliefsLead, lang), body:writing(ctx, 'beliefAnswer', { chips:chipGroup(ctx, 'beliefs') }), primary:next(L, !stepDone('beliefs', team)) }; },
   shapeAnswer(ctx) { const { L, lang, team } = ctx; return { title:rich(L.writingTitle_shapeAnswer, lang), body:writing(ctx, 'shapeAnswer'), primary:next(L, !stepDone('shapeAnswer', team)) }; },
   notChosenAnswer(ctx) {
     const { L, lang, team } = ctx, state = team.state, all = [...trees.tech, ...trees.civic].map(card => card.id).filter(id => !state.tech.includes(id) && !state.civic.includes(id));
@@ -268,13 +279,13 @@ const screens = {
         ${row(rich(L.writingTitle_eventAnswer, lang), text('eventAnswer'), 'eventAnswer')}${row(rich(L.writingTitle_geographyAnswer, lang), text('geographyAnswer'), 'geographyAnswer')}
         ${row(rich(L.governmentTitle, lang), [chipText('government', state.government), text('governmentAnswer')].filter(Boolean).join('<br>'), 'government')}
         ${row(rich(L.economyTitle, lang), [chipText('economy', state.economy), text('economyAnswer')].filter(Boolean).join('<br>'), 'economy')}
-        ${row(rich(L.beliefsTitle, lang), [chipText('beliefs', state.beliefs), text('beliefAnswer')].filter(Boolean).join('<br>'), 'beliefs')}
-        ${row(rich(L.writingTitle_shapeAnswer, lang), text('shapeAnswer'), 'shapeAnswer')}${row(rich(L.writingTitle_notChosenAnswer, lang), text('notChosenAnswer'), 'notChosenAnswer')}</dl>`, primary:next(L) };
+        ${row(rich(L.beliefsTitle, lang), [chipText('beliefs', state.beliefs), !shortLesson(team)||state.beliefs==='other'?text('beliefAnswer'):''].filter(Boolean).join('<br>'), 'beliefs')}
+        ${shortLesson(team)?'':row(rich(L.writingTitle_shapeAnswer, lang), text('shapeAnswer'), 'shapeAnswer')+row(rich(L.writingTitle_notChosenAnswer, lang), text('notChosenAnswer'), 'notChosenAnswer')}</dl>`, primary:next(L) };
   },
   submit(ctx) {
     const { L, lang, team } = ctx;
     if (team.submittedAt) return { title:`✓ ${rich(L.submitted, lang)}`, body:`<p class="done-note">${rich(L.submittedNote, lang)}</p>`, primary:next(L) };
-    const gaps = submissionGaps(team.state);
+    const gaps = submissionGaps(team.state,team.lessonVersion);
     const targets = { region:'choosePlace', tech:'techTree', civic:'civicTree', event:'eventRoll', eventResolved:'eventResolve', government:'government', economy:'economy', beliefs:'beliefs', ...Object.fromEntries(Object.entries(stepField).map(([step, field]) => [field, step])) };
     return { title:rich(L.submitTitle, lang), lead:rich(L.submitLead, lang),
       body:gaps.length ? `<div class="gaps"><h2>${rich(L.gapsTitle, lang)}</h2><ul>${gaps.filter(gap => gapKeys.includes(gap)).map(gap => `<li>${btn(rich(L[gap], lang), { nav:`step:${targets[gap]}` }, { kind:'small' })}</li>`).join('')}</ul></div>` : `<p class="ready">🏛️</p>`,
@@ -282,13 +293,13 @@ const screens = {
   },
   poster(ctx) {
     const { L, lang, team } = ctx;
-    return { title:rich(L.posterTitle, lang), lead:rich(L.posterLead, lang), wide:true, cls:'poster-screen',
+    return { title:rich(L.posterTitle, lang), lead:rich(shortLesson(team)?L.lessonShortTalk:L.posterLead, lang), wide:true, cls:'poster-screen',
       body:`<div id="poster-wrap" class="poster-wrap">${posterMarkup(team, lang, L)}</div>`, secondary:`<div class="poster-tools">${btn(`🖨️ ${L.print}`, { action:'print' }, { kind:'secondary' })}${btn(`⛶ ${L.fullScreen}`, { action:'fullscreen' }, { kind:'secondary' })}</div>`, primary:next(L) };
   },
   wait(ctx) {
-    const { L, lang, reveal } = ctx;
-    return { title:rich(L.waitTitle, lang), body:`<div class="prose big">${L.waitLines.map(text => `<p>🎤 ${rich(text, lang)}</p>`).join('')}</div><p class="waiting ${reveal ? 'open' : ''}" aria-live="polite">${reveal ? `✨ ${rich(L.revealOpenNote, lang)}` : `<span class="dots" aria-hidden="true"></span> ${rich(L.waitNote, lang)}`}</p>`,
-      primary:next(L, !reveal) };
+    const { L, lang, reveal, team } = ctx;
+    return { title:rich(L.waitTitle, lang), body:`<div class="prose big">${(shortLesson(team)?L.lessonShortWait:L.waitLines).map(text => `<p>🎤 ${rich(text, lang)}</p>`).join('')}</div><p class="waiting ${reveal ? 'open' : ''}" aria-live="polite">${shortLesson(team)?rich(L.lessonShortEnd,lang):reveal ? `✨ ${rich(L.revealOpenNote, lang)}` : `<span class="dots" aria-hidden="true"></span> ${rich(L.waitNote, lang)}`}</p>`,
+      primary:next(L, !shortLesson(team) && !reveal, shortLesson(team)?L.classDiscussionDone:L.next) };
   },
   revealPlace(ctx) {
     const { L, lang, team } = ctx, point = team.state.mapPoint, reveal = regions[point].reveal;
@@ -315,6 +326,10 @@ const screens = {
     if(team.state.reflection?.submittedAt)return {title:`✓ ${rich(L.reflectionComplete,lang)}`,body:`<p>${rich(L.reflectionCompleteNote,lang)}</p>`,primary:next(L)};
     const gaps=reflectionGaps(team.state);
     return {title:rich(L.reflectionSubmit,lang),lead:rich(L.reflectionSubmitLead,lang),body:gaps.length?`<div class="gaps"><h2>${rich(L.reflectionStillMissing,lang)}</h2>${gaps.map(key=>btn(L[`writingTitle_${key}`],{nav:`step:${key}`},{kind:'small'})).join('')}</div>`:'',primary:btn(L.reflectionSubmit,{act:'submitReflection'},{disabled:!!gaps.length})};
+  },
+  shortComplete(ctx) {
+    const {L,lang}=ctx;
+    return {title:rich(L.lessonComplete,lang),lead:rich(L.lessonShortEnd,lang),body:`<ol class="discussion-questions">${L.lessonDiscussion.map(text=>`<li><p>${rich(text,lang)}</p></li>`).join('')}</ol>`,primary:btn(L.posterTitle,{nav:'step:poster'})};
   },
   takeaway(ctx) {
     const { L, lang } = ctx;

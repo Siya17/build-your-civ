@@ -30,9 +30,9 @@ Keep secret files out of Git. The repository ignores `.env`, but that file is **
 4. Open **Authentication** and click **Get started**. You do not need to enable Google, email, or phone sign-in. This app supplies its own sign-in tokens.
 5. Open **Firestore Database → Rules**. Copy all the text from [firestore.rules](firestore.rules), replace the editor's contents, and click **Publish**. Do not use open/test rules. These rules let students read their own team and teachers read all teams; the server handles writes.
 
-## Step 2: Copy two Firebase settings
+## Step 2: Copy two Firebase settings and allow Firestore access
 
-These are different things. You need both.
+The two settings in A and B are different things. You need both. Then complete C so the server key can save work.
 
 ### A. The website settings
 
@@ -53,6 +53,19 @@ In Firebase, open **Project settings → Service accounts → Firebase Admin SDK
 Open it in a text editor. Its **entire contents**, including the opening and closing braces, are the value for `FIREBASE_SERVICE_ACCOUNT` in Step 3. Keep the `\n` characters inside the private key exactly as downloaded. Do not paste this file into GitHub, the website, or a chat.
 
 Both settings must belong to the same Firebase project: the server key's `project_id` must match the website settings' `projectId`.
+
+### C. Let the server key use Firestore
+
+A new Firebase project's server key may be allowed to sign students in but **not** to read or save in Firestore. If you skip this step, the online app fails with “Classroom setup is incomplete” even when every Vercel setting is correct.
+
+1. In the downloaded JSON file, find `client_email`. It looks like `firebase-adminsdk-xxxxx@YOUR_PROJECT_ID.iam.gserviceaccount.com`. Copy that address.
+2. Open the Google Cloud console for the same project. From Firebase: click the gear next to **Project Overview → Project settings → Service accounts**, then click **Manage service account permissions**. Alternatively, sign in to the Google Cloud console with the same Google account and choose your Firebase project in the project picker at the top.
+3. Open the **☰** menu and choose **IAM & Admin → IAM**.
+4. Click **Grant access**. Paste the `client_email` address into **New principals**.
+5. Under **Select a role**, search for **Cloud Datastore User** and choose it. Firestore permissions still use the older “Datastore” name.
+6. Click **Save**. The change can take a minute or two to apply.
+
+If the address is already listed on the IAM page, you can click the pencil on its row, then **Add another role → Cloud Datastore User → Save**. If it is not listed, tick **Include Google-provided role grants** above the table.
 
 ## Step 3: Connect the repository to Vercel
 
@@ -83,7 +96,7 @@ If Node.js is installed, run this command in a terminal to generate `SESSION_SEC
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Paste the result as the value. Do not wrap the value in extra quotation marks. For the two JSON settings, paste the JSON object itself, not a filename. You do not need `HOST`, `PORT`, or `DATA_DIR` on Vercel.
+Paste the result as the value. Do not wrap the value in extra quotation marks. For the two JSON settings, paste the JSON object itself, not a filename: the value must start with `{` and end with `}`. If you copy the values from a local `.env` file, leave out any single or double quotes around them there. A local server strips those quotes, but Vercel keeps them as part of the value, which makes the JSON invalid. You do not need `HOST`, `PORT`, or `DATA_DIR` on Vercel.
 
 6. Click **Deploy** and wait for the deployment to become ready.
 7. Copy the production website address Vercel gives you, such as `https://your-project.vercel.app`.
@@ -125,17 +138,19 @@ This means the browser expected structured app data, but received ordinary text 
 
 1. Make sure the latest code has been pushed and deployed.
 2. Open `/api/health` on the same website.
-3. If it fails, open that deployment in Vercel and inspect its **Runtime Logs**. If the build failed, inspect its **Build Logs** instead. Trigger `/api/health` again to get a fresh log entry.
-4. Confirm Node.js is `24.x`, all four Production variables are set, both JSON values are valid, the Firebase project IDs match, and the default Firestore database exists.
+3. If it fails, open the logs in Vercel: your project → **Deployments** → the latest **Production** deployment → **Logs** (called **Runtime Logs** in some layouts). If the build failed, inspect its **Build Logs** instead. Reload `/api/health` to get a fresh log entry, then look for the line beginning `Classroom initialization failed:`.
+4. Confirm Node.js is `24.x`, all four Production variables are set, both JSON values are valid, the Firebase project IDs match, the default Firestore database exists, and the server key has the **Cloud Datastore User** role (Step 2C).
 5. Correct the setting identified by the logs, **redeploy**, then repeat Step 4 above.
 
-Startup errors caught by the API return JSON with HTTP 503 and a setup message. Hosting failures that happen before the function runs can still return plain text or HTML; the browser handles those without exposing the raw response.
+Startup errors caught by the API return JSON with HTTP 503 and a setup message. That message always says “check the Vercel environment variables”, whatever the actual cause, so treat it as “look at the logs”, not as proof that a variable is wrong. Hosting failures that happen before the function runs can still return plain text or HTML; the browser handles those without exposing the raw response.
 
 If Runtime Logs mention `ERR_REQUIRE_ESM`, `jwks-rsa`, and `jose`, deploy the latest code with both `package.json` and `package-lock.json`. The project overrides only `jwks-rsa`'s `jose` dependency to version `5.10.0`, which supports CommonJS loading. This avoids a Firebase Admin startup failure in Vercel's module loader. The deployment test reproduces that loader restriction and verifies RSA signing-key conversion. This particular error happens before Firebase settings are checked.
 
 | What you see | What to check |
 | --- | --- |
 | `/api/health` returns 503 and a setup message | Check the Vercel Runtime Logs for the initialization error. Verify variables, JSON, credentials, and Firestore setup. |
+| Logs say `PERMISSION_DENIED: Missing or insufficient permissions` | The variables are fine, but the server key cannot use Firestore. Give its `client_email` the **Cloud Datastore User** role (Step 2C), wait a minute, and reload `/api/health`. No variable change or redeploy is needed. |
+| Logs say `FIREBASE_SERVICE_ACCOUNT must contain valid JSON` or `FIREBASE_WEB_CONFIG must contain valid JSON` | The value in Vercel is not a bare JSON object. Remove any surrounding quotes copied from `.env`, so it starts with `{` and ends with `}`, then redeploy. |
 | `/api/health` returns plain text, HTML, 404, or a hosting error | Check the deployed commit, root directory, Node version, build logs, function logs, and the checked-in `vercel.json`. |
 | The website or `/api/health` redirects to Vercel sign-in | Deployment Protection is blocking public access. Use a publicly accessible Production URL and test it while signed out of Vercel. |
 | Teacher sign-in works but updates keep reconnecting | Confirm Firebase Authentication was initialized, the API key belongs to the same project, the Firestore rules were published, and the hostname is authorized. |

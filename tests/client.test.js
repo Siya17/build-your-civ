@@ -17,7 +17,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const storage = () => { const values = new Map(); return { getItem:key => values.get(key) ?? null, setItem:(key,value) => values.set(key,String(value)) }; };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no; }); return { promise,resolve,reject }; };
 const scriptedDice = (...faces) => () => faces.shift();
-const makeTeam = (state = game.normalizeState({ ...game.initialState(), mapPoint:'G', fixedPoint:'G' }), id = 1) => ({ id, name:`Team ${id}`, createdAt:`2026-10-01:${id}`, submittedAt:null, version:1, state });
+const makeTeam = (state = game.normalizeState({ ...game.initialState(), mapPoint:'G', fixedPoint:'G' }), id = 1) => ({ id, name:`Team ${id}`, createdAt:`2026-10-01:${id}`, submittedAt:null, version:1, state, lessonVersion:'full' });
 const picked = (...ids) => ids.reduce((state,id) => game.applyAction(state, { type:'pick', tree:id === 'laws' ? 'civic' : 'tech', id }), makeTeam().state);
 
 function client(api = async () => { throw new Error('unexpected request'); }, initial = makeTeam(), { reducedMotion = true } = {}) {
