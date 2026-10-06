@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function session() {
+      return get(/databases/$(database)/documents/classrooms/main/sessions/$(request.auth.uid)).data;
+    }
+    function live() {
+      return request.auth != null && session().expiresAt > request.time.toMillis()
+        && (session().role == 'teacher' || exists(/databases/$(database)/documents/classrooms/main/teams/$(string(session().teamId))));
+    }
+    function teacher() { return live() && session().role == 'teacher'; }
+    function ownTeam(id) { return live() && session().role == 'student' && string(session().teamId) == id; }
+    match /classrooms/main/teams/{id} {
+      allow read: if teacher() || ownTeam(id);
+    }
+    match /classrooms/main/presence/{id} {
+      allow read: if teacher() || (ownTeam(id) && exists(/databases/$(database)/documents/classrooms/main/teams/$(id)));
+    }
+    match /classrooms/main/settings/reveal { allow read: if live(); }
+    match /classrooms/main/sessions/{uid} {
+      // A user can observe deletion of their own session to handle logout promptly.
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+    // Browser clients never write game state, dice, join codes, sessions or logs.
+    // All writes go through the Vercel API using Firebase Admin credentials.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

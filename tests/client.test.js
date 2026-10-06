@@ -31,7 +31,7 @@ function client(api = async () => { throw new Error('unexpected request'); }, in
     localStorage:storage(), sessionStorage:storage(), Element:class {},
     setTimeout:(callback,delay) => { timers.set(++timerId,{ callback,delay }); return timerId; },
     clearTimeout:id => timers.delete(id), request:api, noticeSink:(message,type) => notices.push({ message,type }),
-    EventSource:class { constructor(){this.listeners=new Map()} addEventListener(name,listener){this.listeners.set(name,listener)} close(){} }
+    ClassroomStream:class { constructor(){this.listeners=new Map()} addEventListener(name,listener){this.listeners.set(name,listener)} close(){} }
   });
   vm.runInContext(`${source}\n
     render=()=>{}; updateSync=()=>{};

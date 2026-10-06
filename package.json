@@ -3,10 +3,23 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": {"node": ">=24"},
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "node --watch server.mjs",
     "start": "node server.mjs",
+    "build": "node scripts/build.mjs",
+    "test:firebase": "firebase emulators:exec --only firestore --project demo-build-your-civ \"node --test --test-isolation=none tests/firebase.integration.js\"",
     "test": "node --test --test-isolation=none tests/*.test.js"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "esbuild": "^0.28.2",
+    "firebase-tools": "^15.32.1"
   }
 }

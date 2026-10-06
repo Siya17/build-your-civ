@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, sep } from 'node:path';
 import { normalizeCode, isCodeShape, writableFields, reflectionFields } from '../shared/game.js';
 import { regions, worldMap } from '../shared/regions.js';
-import { addLetterTeams, createTeam, createSession, deleteSession, deleteTeam, findTeamByCode, getSession, getTeam, joinedNames, listTeams, pruneSessions, regenerateCode, renameTeam, reopenTeam, reopenReflection, revealOpen, sameHash, setReveal, submitTeam, submitReflection, teamActivity, updateTeam } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const js = 'text/javascript; charset=utf-8', css = 'text/css; charset=utf-8';
@@ -16,18 +15,18 @@ const sourceFiles = {
   '/app.css':['public/app.css',css],
   '/game.css':['public/game.css',css]
 };
-for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher','regional-map','regional-geography']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
+for (const module of ['bootstrap','app','screens','ui','tree','poster','printing','prompts','teacher','regional-map','regional-geography','realtime']) sourceFiles[`/${module}.js`]=[`public/${module}.js`,js];
 for (const module of ['game','cards','regions','glossary','flow','i18n','credits']) sourceFiles[`/shared/${module}.js`]=[`shared/${module}.js`,js];
 // Every image under public/assets is served at its own path.
 const imageTypes = {'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
-(function addAssets(folder) {
+function addAssets(folder) {
   for (const name of readdirSync(join(root,folder))) {
     const path = join(folder,name);
     if (statSync(join(root,path)).isDirectory()) { addAssets(path); continue; }
     const type = imageTypes[name.slice(name.lastIndexOf('.')).toLowerCase()];
     if (type) sourceFiles['/'+path.split(sep).join('/').replace(/^public\//,'')] = [path,type];
   }
-})('public/assets');
+}
 // The strict CSP forbids inline styles, so the map pins are CSS generated from each
 // region's real latitude and longitude on the Pacific-centred world map.
 const pinX = lon => ((((lon - worldMap.left) % 360) + 360) % 360) / 360 * 100;
@@ -38,6 +37,7 @@ const mapPointCss = Object.entries(regions).map(([letter,{site:[lat,lon]}])=>{
 }).join('');
 
 function buildStatic() {
+  addAssets('public/assets');
   const table = new Map();
   const put = (route,body,type,immutable) => {
     const compressible = /^(text\/|application\/json|image\/svg)/.test(type);
@@ -54,8 +54,9 @@ function buildStatic() {
   put('/map-points.css',Buffer.from(mapPointCss),css,false);
   return table;
 }
-const staticFiles = buildStatic();
+let staticFiles;
 
+let localStore;
 const clients = new Set();
 const attempts = new Map();
 const teacherAttempts = [];
@@ -82,13 +83,13 @@ function dropClient(client) {
 }
 // Names of students currently holding an open event stream for this team. Unlike the
 // session list in the store, this empties when a student closes their tab.
-function liveNames(teamId,alsoInclude) {
+function localLiveNames(teamId,alsoInclude) {
   const names = new Set();
   for (const client of clients) if (client.role==='student' && client.teamId===teamId && client.name) names.add(client.name);
   if (alsoInclude) names.add(alsoInclude);
   return [...names].sort();
 }
-function presenceFields(teamId) {
+function localPresenceFields(teamId) {
   const fields = {};
   for (const entry of presence.values()) {
     if (entry.teamId!==teamId || !entry.field) continue;
@@ -97,21 +98,21 @@ function presenceFields(teamId) {
   }
   return fields;
 }
-function broadcast(teamId,actor) {
-  const team = getTeam(teamId);
-  const teamPayload = JSON.stringify({team,roster:liveNames(teamId),by:actor});
+async function broadcastStore(store,teamId,actor) {
+  const team = await store.getTeam(teamId);
+  const teamPayload = JSON.stringify({team,roster:localLiveNames(teamId),by:actor});
   let teamsPayload = null;
   for (const client of [...clients]) {
-    if (client.role==='teacher') writeEvent(client,'teams',teamsPayload ??= JSON.stringify({teams:listTeams()}));
+    if (client.role==='teacher') writeEvent(client,'teams',teamsPayload ??= JSON.stringify({teams:await store.listTeams()}));
     else if (client.teamId===teamId) writeEvent(client,'team',teamPayload);
   }
 }
 function broadcastPresence(teamId) {
-  const payload = JSON.stringify({roster:liveNames(teamId),fields:presenceFields(teamId)});
+  const payload = JSON.stringify({roster:localLiveNames(teamId),fields:localPresenceFields(teamId)});
   for (const client of [...clients]) if (client.role==='student' && client.teamId===teamId) writeEvent(client,'presence',payload);
 }
-function broadcastReveal() {
-  const payload = JSON.stringify({reveal:revealOpen()});
+async function broadcastRevealStore(store) {
+  const payload = JSON.stringify({reveal:await store.revealOpen()});
   for (const client of [...clients]) writeEvent(client,'reveal',payload);
 }
 function revokeTeam(teamId) {
@@ -127,6 +128,14 @@ export function closeStreams() {
 }
 
 const readJson = async req => {
+  // Vercel parses the request body before calling a Node function.
+  if (req.body !== undefined) {
+    let value=req.body;
+    if (Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value),'utf8')>12000) throw Object.assign(new Error('Request too large'),{status:413});
+    if (typeof value==='string') {try {value=JSON.parse(value);}catch {throw new Error('Invalid JSON');}}
+    if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error('Send a JSON object');
+    return value;
+  }
   const chunks=[];
   let length=0;
   for await (const chunk of req.iterator({destroyOnReturn:false})) {
@@ -174,15 +183,10 @@ const sweep = setInterval(()=>{
     const live=hits.filter(time=>time>cutoff);
     if (live.length) attempts.set(key,live); else attempts.delete(key);
   }
-  pruneSessions();
+  localStore?.pruneSessions();
 },5*60_000);
 sweep.unref();
 
-function auth(req,role) {
-  const session=getSession(cookie(req));
-  if (!session || (role && session.role!==role)) {const e=new Error('Sign in required');e.status=401;throw e;}
-  return session;
-}
 function checkOrigin(req) {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return;
   const origin=req.headers.origin;
@@ -202,46 +206,61 @@ function serveStatic(req,res,entry) {
   res.end(body);
 }
 // rollDie can be replaced in tests; in class every die is rolled here, never in the browser.
-export function createAppServer({teacherPassword,secureCookie=false,trustProxy=process.env.TRUST_PROXY==='1',rollDie=()=>randomInt(1,7)}) {
-  const setCookie=token=>`civ_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=43200${secureCookie?'; Secure':''}`;
-  return createServer(async (req,res)=>{
+export function createAppHandler({teacherPassword,secureCookie=false,trustProxy=process.env.TRUST_PROXY==='1',rollDie=()=>randomInt(1,7),store:providedStore,staticAssets=true}) {
+  const ready=providedStore?Promise.resolve(providedStore):import('./store.js').then(store=>localStore=store);
+  const files=staticAssets?(staticFiles ||= buildStatic()):new Map();
+  return async (req,res)=>{
+    let store;
+    try { store=await ready; } catch { send(res,503,{error:'Classroom storage is unavailable'});return; }
+    const {getSession,createSession,deleteSession,getTeam,listTeams,findTeamByCode,sameHash,updateTeam,submitTeam,submitReflection,setReveal,revealOpen,createTeam,addLetterTeams,deleteTeam,renameTeam,joinedNames,teamActivity,regenerateCode,reopenTeam,reopenReflection}=store;
+    const liveNames=store.liveNames || localLiveNames;
+    const presenceFields=store.presenceFields || localPresenceFields;
+    const broadcast=(id,actor)=>store.realtimeToken?Promise.resolve():broadcastStore(store,id,actor);
+    const broadcastReveal=()=>store.realtimeToken?Promise.resolve():broadcastRevealStore(store);
+    const auth=async(req,role)=>{const session=await getSession(cookie(req));if(!session || (role&&session.role!==role))throw Object.assign(new Error('Sign in required'),{status:401});return session;};
+    const allowLogin=(kind)=>store.loginAllowed?store.loginAllowed(clientAddress(req,trustProxy),kind):loginAllowed(req,kind,trustProxy);
+    const setCookie=token=>`civ_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=43200${secureCookie?'; Secure':''}`;
+
     res.setHeader('X-Content-Type-Options','nosniff');
     res.setHeader('Referrer-Policy','same-origin');
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     if (secureCookie) res.setHeader('Strict-Transport-Security','max-age=15552000');
     try { const url=new URL(req.url,'http://localhost'), pathname=url.pathname; checkOrigin(req);
-      if (req.method==='GET' && staticFiles.has(pathname)) { serveStatic(req,res,staticFiles.get(pathname)); return; }
+      if (req.method==='GET' && files.has(pathname)) { serveStatic(req,res,files.get(pathname)); return; }
+      if (pathname==='/api/realtime' && req.method==='GET') {
+        const session=await auth(req);send(res,200,store.realtimeToken?await store.realtimeToken(session,cookie(req)):{mode:'sse'});return;
+      }
       if (pathname==='/api/health' && req.method==='GET') {send(res,200,{ok:true});return;}
       if (pathname==='/api/me' && req.method==='GET') {
-        const session=getSession(cookie(req));
+        const session=await getSession(cookie(req));
         if (!session) {send(res,200,{authenticated:false});return;}
-        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:listTeams(),reveal:revealOpen()});
-        else {const team=getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:liveNames(team.id,session.name),presence:presenceFields(team.id),reveal:revealOpen()});}
+        if (session.role==='teacher') send(res,200,{authenticated:true,role:'teacher',name:'Teacher',teams:await listTeams(),reveal:await revealOpen()});
+        else {const team=await getTeam(session.teamId); if (!team) {send(res,200,{authenticated:false});return;} send(res,200,{authenticated:true,role:'student',name:session.name,team,roster:await liveNames(team.id,session.name),presence:await presenceFields(team.id),reveal:await revealOpen()});}
         return;
       }
       if (pathname==='/api/auth/teacher' && req.method==='POST') {
-        if (!loginAllowed(req,'teacher',trustProxy)) {send(res,429,{error:'Too many sign-in attempts. Try again in a few minutes.'});return;}
+        if (!await allowLogin('teacher')) {send(res,429,{error:'Too many sign-in attempts. Try again in a few minutes.'});return;}
         const body=await readJson(req);
         if (typeof body.password!=='string' || !sameHash(body.password,teacherPassword)) {send(res,401,{error:'Incorrect teacher password'});return;}
-        const {token}=createSession('teacher',null,'Teacher');
-        send(res,200,{authenticated:true,role:'teacher',teams:listTeams(),reveal:revealOpen()},{'Set-Cookie':setCookie(token)});return;
+        const {token}=await createSession('teacher',null,'Teacher');
+        send(res,200,{authenticated:true,role:'teacher',teams:await listTeams(),reveal:await revealOpen()},{'Set-Cookie':setCookie(token)});return;
       }
       if (pathname==='/api/auth/team' && req.method==='POST') {
-        if (!loginAllowed(req,'student',trustProxy)) {send(res,429,{error:'Too many sign-in attempts from this network. Ask your teacher for help.'});return;}
+        if (!await allowLogin('student')) {send(res,429,{error:'Too many sign-in attempts from this network. Ask your teacher for help.'});return;}
         const body=await readJson(req);const name=String(body.name||'').trim();
         if (name.length<2 || name.length>60) {send(res,400,{error:'Enter your name (2–60 characters)'});return;}
         const normalized=normalizeCode(body.code);
         if (!isCodeShape(normalized)) {send(res,400,{error:'Enter your team code, like A-427.'});return;}
-        const team=findTeamByCode(normalized);
+        const team=await findTeamByCode(normalized);
         if (!team) {send(res,401,{error:'Team code not found'});return;}
-        const {token}=createSession('student',team.id,name);
-        send(res,200,{authenticated:true,role:'student',name,team,roster:liveNames(team.id,name),presence:presenceFields(team.id),reveal:revealOpen()},{'Set-Cookie':setCookie(token)});
+        const {token}=await createSession('student',team.id,name);
+        send(res,200,{authenticated:true,role:'student',name,team,roster:await liveNames(team.id,name),presence:await presenceFields(team.id),reveal:await revealOpen()},{'Set-Cookie':setCookie(token)});
         broadcastPresence(team.id);return;
       }
       if (pathname==='/api/logout' && req.method==='POST') {
-        const token=cookie(req);const session=getSession(token);
-        deleteSession(token);presence.delete(token);
+        const token=cookie(req);const session=await getSession(token);
+        await deleteSession(token);presence.delete(token);
         send(res,200,{ok:true},{'Set-Cookie':'civ_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'});
         for (const client of [...clients]) if (client.token===token) {
           writeEvent(client,'revoked',JSON.stringify({reason:'logout'}));dropClient(client);try {client.res.end();}catch {}
@@ -249,60 +268,62 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
         if (session?.teamId) broadcastPresence(session.teamId);return;
       }
       if (pathname==='/api/events' && req.method==='GET') {
-        const session=auth(req);
+        if(store.realtimeToken){send(res,404,{error:'Use Firebase realtime updates'});return;}
+        const session=await auth(req);
         res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});
         res.write(': connected\n\n');
         const client={res,role:session.role,teamId:session.teamId,name:session.name,token:cookie(req)};
         client.keepalive=setInterval(()=>writeEvent(client,'ping','{}'),20_000);
         clients.add(client);
         // Reconnecting browsers may have missed both a teammate's action and a reveal.
-        writeEvent(client,'reveal',JSON.stringify({reveal:revealOpen()}));
-        if (session.role==='student') writeEvent(client,'team',JSON.stringify({team:getTeam(session.teamId),roster:liveNames(session.teamId)}));
-        else writeEvent(client,'teams',JSON.stringify({teams:listTeams()}));
+        writeEvent(client,'reveal',JSON.stringify({reveal:await revealOpen()}));
+        if (session.role==='student') writeEvent(client,'team',JSON.stringify({team:await getTeam(session.teamId),roster:await liveNames(session.teamId)}));
+        else writeEvent(client,'teams',JSON.stringify({teams:await listTeams()}));
         req.on('close',()=>{const teamId=client.teamId;dropClient(client);if (client.role==='student') broadcastPresence(teamId)});
         if (session.role==='student') broadcastPresence(session.teamId);
         return;
       }
       if (pathname==='/api/team/presence' && req.method==='POST') {
-        const session=auth(req,'student');const body=await readJson(req);
+        const session=await auth(req,'student');const body=await readJson(req);
         const field=body.field==null?null:String(body.field);
         if (field!==null && ![...writableFields,...reflectionFields].includes(field)) {send(res,400,{error:'Unknown field'});return;}
         const token=cookie(req);
-        if (field) presence.set(token,{teamId:session.teamId,name:session.name,field});
+        if (store.setPresence) await store.setPresence(token,session,field);
+        else if (field) presence.set(token,{teamId:session.teamId,name:session.name,field});
         else presence.delete(token);
         send(res,200,{ok:true});broadcastPresence(session.teamId);return;
       }
       if (pathname==='/api/team/action' && req.method==='POST') {
-        const session=auth(req,'student');const action=await readJson(req);
+        const session=await auth(req,'student');const action=await readJson(req);
         let team;
-        try{team=updateTeam(session.teamId,action,session.name,rollDie);}
-        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:getTeam(session.teamId),roster:liveNames(session.teamId,session.name)});return;}throw error;}
-        send(res,200,{team,roster:liveNames(team.id,session.name),by:session.name});broadcast(team.id,session.name);return;
+        try{team=await updateTeam(session.teamId,action,session.name,rollDie);}
+        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:await getTeam(session.teamId),roster:await liveNames(session.teamId,session.name)});return;}throw error;}
+        send(res,200,{team,roster:await liveNames(team.id,session.name),by:session.name});await broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/team/submit' && req.method==='POST') {
-        const session=auth(req,'student');await readJson(req);
-        const team=submitTeam(session.teamId,session.name);
-        send(res,200,{team,roster:liveNames(team.id,session.name)});broadcast(team.id,session.name);return;
+        const session=await auth(req,'student');await readJson(req);
+        const team=await submitTeam(session.teamId,session.name);
+        send(res,200,{team,roster:await liveNames(team.id,session.name)});await broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/team/reflection/submit' && req.method==='POST') {
-        const session=auth(req,'student');const body=await readJson(req);
+        const session=await auth(req,'student');const body=await readJson(req);
         let team;
-        try {team=submitReflection(session.teamId,session.name,body.expectedVersion);}
-        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:getTeam(session.teamId)});return;}throw error;}
-        send(res,200,{team,roster:liveNames(team.id,session.name)});broadcast(team.id,session.name);return;
+        try {team=await submitReflection(session.teamId,session.name,body.expectedVersion);}
+        catch(error){if(error.status===409){send(res,409,{error:error.message,code:error.code,team:await getTeam(session.teamId)});return;}throw error;}
+        send(res,200,{team,roster:await liveNames(team.id,session.name)});await broadcast(team.id,session.name);return;
       }
       if (pathname==='/api/teacher/reveal' && req.method==='POST') {
-        auth(req,'teacher');const body=await readJson(req);
+        await auth(req,'teacher');const body=await readJson(req);
         if (typeof body.reveal!=='boolean') {send(res,400,{error:'Send reveal: true or false'});return;}
-        send(res,200,{reveal:setReveal(body.reveal)});broadcastReveal();return;
+        send(res,200,{reveal:await setReveal(body.reveal)});await broadcastReveal();return;
       }
       if (pathname==='/api/teacher/teams' && req.method==='POST') {
-        auth(req,'teacher');const body=await readJson(req);
-        const team=createTeam(body.name,body.point);send(res,201,{team});broadcast(team.id);return;
+        await auth(req,'teacher');const body=await readJson(req);
+        const team=await createTeam(body.name,body.point);send(res,201,{team});await broadcast(team.id);return;
       }
       if (pathname==='/api/teacher/letter-teams' && req.method==='POST') {
-        auth(req,'teacher');await readJson(req);
-        const made=addLetterTeams();const teams=listTeams();
+        await auth(req,'teacher');await readJson(req);
+        const made=await addLetterTeams();const teams=await listTeams();
         send(res,200,{made:made.length,teams});
         const payload=JSON.stringify({teams});
         for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
@@ -310,20 +331,20 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       }
       const detail=pathname.match(/^\/api\/teacher\/teams\/(\d+)$/);
       if (detail && req.method==='GET') {
-        auth(req,'teacher');const id=Number(detail[1]);const team=getTeam(id);
+        await auth(req,'teacher');const id=Number(detail[1]);const team=await getTeam(id);
         if (!team) {send(res,404,{error:'Team not found'});return;}
-        send(res,200,{team,roster:liveNames(id),joined:joinedNames(id)});return;
+        send(res,200,{team,roster:await liveNames(id),joined:await joinedNames(id)});return;
       }
       if (detail && req.method==='PATCH') {
-        auth(req,'teacher');const body=await readJson(req);
-        const team=renameTeam(Number(detail[1]),body.name);
-        send(res,200,{team});broadcast(team.id);return;
+        await auth(req,'teacher');const body=await readJson(req);
+        const team=await renameTeam(Number(detail[1]),body.name);
+        send(res,200,{team});await broadcast(team.id);return;
       }
       if (detail && req.method==='DELETE') {
-        auth(req,'teacher');await readJson(req);const id=Number(detail[1]);
-        if (!getTeam(id)) {send(res,404,{error:'Team not found'});return;}
-        deleteTeam(id);revokeTeam(id);
-        const remaining=listTeams();
+        await auth(req,'teacher');await readJson(req);const id=Number(detail[1]);
+        if (!await getTeam(id)) {send(res,404,{error:'Team not found'});return;}
+        await deleteTeam(id);revokeTeam(id);
+        const remaining=await listTeams();
         send(res,200,{ok:true,teams:remaining});
         const payload=JSON.stringify({teams:remaining});
         for (const client of [...clients]) if (client.role==='teacher') writeEvent(client,'teams',payload);
@@ -331,21 +352,23 @@ export function createAppServer({teacherPassword,secureCookie=false,trustProxy=p
       }
       const activityRoute=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/activity$/);
       if (activityRoute && req.method==='GET') {
-        auth(req,'teacher');const id=Number(activityRoute[1]);
-        if (!getTeam(id)) {send(res,404,{error:'Team not found'});return;}
-        send(res,200,teamActivity(id));return;
+        await auth(req,'teacher');const id=Number(activityRoute[1]);
+        if (!await getTeam(id)) {send(res,404,{error:'Team not found'});return;}
+        send(res,200,await teamActivity(id));return;
       }
       const codeRoute=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/new-code$/);
-      if (codeRoute && req.method==='POST') {auth(req,'teacher');await readJson(req);const code=regenerateCode(Number(codeRoute[1]));send(res,200,{code});return;}
+      if (codeRoute && req.method==='POST') {await auth(req,'teacher');await readJson(req);const code=await regenerateCode(Number(codeRoute[1]));send(res,200,{code});return;}
       const reopenRoute=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/reopen$/);
-      if (reopenRoute && req.method==='POST') {auth(req,'teacher');await readJson(req);const team=reopenTeam(Number(reopenRoute[1]));send(res,200,{team});broadcast(team.id);return;}
+      if (reopenRoute && req.method==='POST') {await auth(req,'teacher');await readJson(req);const team=await reopenTeam(Number(reopenRoute[1]));send(res,200,{team});await broadcast(team.id);return;}
       const reflectionReopen=pathname.match(/^\/api\/teacher\/teams\/(\d+)\/reopen-reflection$/);
-      if (reflectionReopen && req.method==='POST') {auth(req,'teacher');await readJson(req);const team=reopenReflection(Number(reflectionReopen[1]));send(res,200,{team});broadcast(team.id);return;}
+      if (reflectionReopen && req.method==='POST') {await auth(req,'teacher');await readJson(req);const team=await reopenReflection(Number(reflectionReopen[1]));send(res,200,{team});await broadcast(team.id);return;}
       send(res,404,{error:'Not found'});
     } catch(error) {
       if (res.headersSent) {res.end();return;}
       const status=error.status || (error.code==='ENOENT'?404:400);
       send(res,status,{error:status>=500?'Server error':error.message,code:status>=500?undefined:error.code,gaps:error.gaps});
     }
-  });
+  };
 }
+
+export function createAppServer(options) { return createServer(createAppHandler(options)); }

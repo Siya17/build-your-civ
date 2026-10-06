@@ -69,6 +69,8 @@ The reveal setting persists across server restarts. Close it on the dashboard be
 
 ## Storage, deployment and older classrooms
 
+For Vercel with Firebase's free Spark plan, follow [DEPLOYMENT.md](DEPLOYMENT.md). The online deployment uses Firestore for persistent work and Firebase listeners for shared updates. The local server continues using SQLite.
+
 The default storage folder is `data/`, containing `classroom.sqlite` and `secret.key`. Keep the secret with its database: it is used to verify sessions and join codes. `DATA_DIR` selects another persistent directory; `HOST` and `PORT` select the listening address (defaults: `127.0.0.1:5173`). Production requires `NODE_ENV=production` and a `TEACHER_PASSWORD` of at least 12 characters. Serve production behind HTTPS because production session cookies are secure. Use one server process for a classroom so all students share its live event stream.
 
 Before upgrading an existing classroom, stop its server normally with Ctrl+C or SIGTERM. Shutdown checkpoints SQLite's write-ahead log. The updated server automatically creates a consistent database backup and copies its secret into `data/backups/pre-v2-<timestamp>-<suffix>/` before changing an older database or saved state. Changes to prerequisites and this lesson's event/belief format receive corresponding `pre-rules` and `pre-lesson` backups before affected states are saved. Keep regular backups of the whole data folder in another location too. Never copy only the database while the server is writing to it; an active `classroom.sqlite-wal` may hold the latest work. Do not commit or share classroom data or the secret.

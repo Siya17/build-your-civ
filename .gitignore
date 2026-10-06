@@ -2,3 +2,13 @@ data/*
 !data/.gitkeep
 node_modules/
 .env
+.env.*
+!.env.example
+dist/
+.vercel/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.tools/
+*-service-account*.json
+*firebase-adminsdk*.json

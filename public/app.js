@@ -10,6 +10,7 @@ import { teacherPage, teacherList, teacherDetailView, teacherPrint, posterOverla
 import { blocker } from './tree.js';
 import { esc, fmt, rich, plain, photo } from './ui.js';
 import { printPosters } from './printing.js';
+import { ClassroomStream } from './realtime.js';
 
 const app=document.querySelector('#app');
 const noticeBox=document.querySelector('#notice');
@@ -93,7 +94,7 @@ function adoptTeam(incoming){
 }
 
 function openStream(){
-  stream?.close();stream=new EventSource('/api/events');
+  stream?.close();stream=new ClassroomStream();
   stream.onopen=()=>{sync='saved';updateSync()};
   stream.onerror=()=>{sync='offline';updateSync()};
   stream.addEventListener('presence',event=>{const data=JSON.parse(event.data);roster=data.roster;presenceFields=data.fields;updatePresence()});
