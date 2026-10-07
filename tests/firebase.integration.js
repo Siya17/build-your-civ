@@ -101,6 +101,17 @@ test('racing event rolls commit exactly once; rejected actions leave no activity
   assert.equal((await store.getTeam(team.id)).version,3);
 });
 
+test('concurrent writers to one answer cannot silently replace each other',async()=>{
+  const team=(await store.listTeams())[0];
+  const results=await Promise.allSettled(['First answer','Second answer'].map(value=>store.updateTeam(team.id,{type:'field',key:'geographyAnswer',value,baseValue:''},value)));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(results.find(r=>r.status==='rejected').reason.code,'fieldConflict');
+  const saved=await store.getTeam(team.id);assert.equal(saved.version,1);
+  assert.equal((await store.teamActivity(team.id)).recent.length,1);
+  await store.updateTeam(team.id,{type:'field',key:'economyAnswer',value:'Different field',baseValue:''},'Other');
+  assert.equal((await store.getTeam(team.id)).state.geographyAnswer,saved.state.geographyAnswer);
+});
+
 test('invalid second dice face rolls back both dice and the activity entry',async()=>{
   const team=(await store.listTeams())[6];
   await store.updateTeam(team.id,{type:'pick',tree:'tech',id:'pottery'},'One');

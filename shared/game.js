@@ -312,6 +312,13 @@ export function applyAction(previous, action, { rollDie } = {}) {
     return value;
   };
   const type = action?.type;
+  // Compare the field itself, not the whole team version: teammates may safely
+  // edit different answers. Replaying an acknowledged value is harmless.
+  if (['field','reflectionAnswer'].includes(type) && Object.hasOwn(action,'baseValue')) {
+    const current=type==='reflectionAnswer'?state.reflection[action.key]:state[action.key];
+    if (typeof action.baseValue!=='string' || (current!==action.baseValue && current!==action.value))
+      throw Object.assign(new Error('A teammate changed this answer. Review both versions.'),{status:409,code:'fieldConflict'});
+  }
   const cardFor = tree => {
     if (!treeIds.includes(tree) || !cardIn(tree, action.id)) throw fail('unknownCard');
     return cardById[action.id];

@@ -1,35 +1,40 @@
-# Implementation verification — 2026-10-01
+# Verification — 7 October 2026
 
-The point-budget classroom game is implemented and verified. Claude's existing work was retained and completed; the retired hex-map and cooperative interfaces are no longer served.
+## Current working copy
 
-## Automated checks
+- Full and 90-minute (Short) modes share game rules and use separate writing/ending requirements.
+- Draft recovery survives refresh and rejoining with the same team/name/browser.
+- Save status stays pending until drafts are acknowledged; reconnect retries saves.
+- Same-answer conflicts retain both versions for an explicit choice. Different fields remain independent.
+- Japanese composition defers redraws and autosaves until composition ends.
 
-- `npm test`: **75 passed, 0 failed**.
-- Rules cover prerequisites, seven-point budgets, free/impossible/hard cards, stored dice reuse, all six events, pre-event reconstruction, mandatory event resolution, required choices, and immutable inputs.
-- Client checks cover rapid queued choices without stale versions, failed saves blocking navigation, draft retention, responses from previous logins, teammate dice conflicts, failed-roll recovery, and animation races.
-- HTTP integration includes a 30-student session, atomic dice and rollback, migration, checkpointed backup integrity, reconnect state, presence, reveal, submission/reopening, logout, and removed routes.
-- Content checks cover both languages, furigana, glossary entries, every displayed photo, and credit-manifest consistency.
+These changes are **local and not yet deployed**.
 
-## Browser verification
+## Checks
 
-Browser checks used a separate temporary SQLite directory and a deterministic test die. They did not use the saved classroom database in the workspace.
+| Check | Result |
+| --- | --- |
+| `npm test` | 151 passed |
+| `npm run test:firebase` | 12 passed |
+| `npm run build` | Passed |
 
-Completed the student flow for Team G: introductions and region cards; prerequisite picks; Horseback Riding's saved result; science/society reviews; Newcomers; Trade selection followed by a separate final confirmation; a mandatory free Foreign Trade gain; all seven answers entered with keystrokes; required government/economy/belief choices; final review; submission; and the presentation poster. The government Next button stayed disabled when only its explanation was filled.
+New regressions cover recovery isolation, stale bases after refresh, reconnect status/retry, repeated conflicts, choosing either version, lost acknowledgements, and Firestore concurrent writers.
 
-The waiting screen received the teacher's reveal toggle live. Historical content and Japanese rendering opened successfully. Closing the reveal returned the student to the waiting screen. The teacher dashboard showed submitted progress and the optional region selector.
+The existing suite covers both lesson versions, validation, event transactions, submission/reopening, live updates, migrations, permissions, and a 30-student local simulation.
 
-![Verified poster](classroom-poster.jpg)
+## Browser check
 
-An additional browser test-team creation was blocked by automatic approval review because it treated creation as a persistent application change. That browser action was left blocked. Fixed-region creation is covered by the passing integration test in its separate disposable database.
+On an isolated local classroom, a conflicting edit kept both answers. A fresh page recovered the unsaved draft; choosing it saved the selected text and returned the status to Saved.
 
-## Remaining content assumption
+## Earlier production audit
 
-Only G's ★ Irrigation, ★ Sailing, and △ Horseback prices are supplied by slide 18. The other ten regional tables and their geography explanations were already authored in the implementation. Their values were preserved and their provenance is documented in `shared/regions.js` and the README for instructor review.
+30 student sessions across six QA teams completed 90 concurrent-round saves. Six submissions matched teacher API reads and fresh student logins. Browser typing survived refresh and received a teammate update. Original classroom teams were untouched; QA teams were removed.
 
-The Foreign Trade-line interpretation and partly-working Trade's epidemic/soil asymmetry follow the pasted design. Old belief answers are retained; other old answers remain visible to teachers as legacy work. Existing submitted teams remain locked until reopened.
+That audit tested the previous deployment. See [the reliability audit](reliability-audit-2026-10-07.md) for its limits. Production must be redeployed and checked before these fixes reach students.
 
-## Running and saved data
+## Limits
 
-Run `npm run dev` with Node.js 24 or newer. Configure a private `TEACHER_PASSWORD` for classroom use; the README describes production and storage settings.
-
-When an older database is opened, the server checkpoints and creates a consistent SQLite backup plus its secret under `data/backups/pre-v2-<timestamp>-<suffix>/` before updating the old schema or state. Retired world tables are preserved. Keep regular backups of the full data directory as well.
+- Browser storage can be blocked or cleared; recovery copies are not backups.
+- Existing tabs need a reload to use conflict-aware saves.
+- No full answer-version history was added.
+- Tests do not guarantee school-network reliability, quota availability, or physical Japanese IME behavior on every device.

@@ -60,6 +60,11 @@ ruby rt{font-size:.5em;font-weight:500;letter-spacing:0;opacity:.85}
 .toast{background:var(--teal-dark);color:#fff;padding:12px 18px;border-radius:12px;box-shadow:var(--shadow);font-size:.92rem;pointer-events:auto}
 .toast.error{background:var(--rust-dark)}
 .toast.warn{background:#7a5620}
+.draft-recovery{margin:16px auto;padding:18px;max-width:960px;background:#fff3d6;border:2px solid #7a5620;border-radius:12px;color:#322810}
+.draft-recovery[hidden]{display:none}
+.draft-recovery pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:180px;overflow:auto}
+.draft-recovery button{padding:10px;margin:6px 4px 0 0;border:1px solid currentColor;border-radius:6px;background:white;color:#322810;cursor:pointer}
+.draft-recovery h2{font-size:1rem}.draft-recovery section{border-top:1px solid #bca579;padding:12px 0}
 
 /* Sign in */
 .auth-page{position:relative;min-height:100vh;background:linear-gradient(160deg,#174a46,#1f5f5a 55%,#2b6b62);color:#fff;overflow:hidden}

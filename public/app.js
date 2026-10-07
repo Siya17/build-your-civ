@@ -18,7 +18,7 @@ const skipLink=document.querySelector('#skip-link');
 const pop=document.querySelector('#term-pop');
 const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 const narrow=window.matchMedia('(max-width: 760px)');
-let lang=localStorage.getItem('civ_lang')==='ja'?'ja':'en';
+let lang='en';try{lang=localStorage.getItem('civ_lang')==='ja'?'ja':'en'}catch{}
 let session=null,team=null,roster=[],teams=[],stream=null,authMode='student',notice='',noticeType='info',sync='saved',reveal=false;
 let lessonVersion='full',lessonLocked=false;
 let teacherDetail=null,teacherDetailId=null,showPoster=false,pickedTeams=new Set();
@@ -29,6 +29,48 @@ let presenceFields={},presenceSent=null,popOwner=null;
 let serverTeam=null,pending=[],actionQueue=Promise.resolve();
 let sessionEpoch=0;
 const answerDrafts=new Map(),saveTimers=new Map(),savingFields=new Map();
+const draftBases=new Map(),fieldConflicts=new Map();
+let draftStorageFailed=false,recoveredDrafts=false,retryTimer=null,composing=false,renderPending=false,recoveryMarkup='';
+const fieldValue=(state,key)=>reflectionFields.includes(key)?state.reflection?.[key]||'':state[key]||'';
+const draftKey=()=>session?.role==='student'&&team?`civ_drafts:${team.id}:${team.createdAt}:${session.name}`:null;
+function persistDrafts(){
+  const key=draftKey();if(!key)return;
+  try{localStorage.setItem(key,JSON.stringify([...answerDrafts].map(([field,value])=>({field,value,base:draftBases.get(field)??fieldValue(serverTeam.state,field)}))));draftStorageFailed=false}
+  catch{draftStorageFailed=true}
+}
+function loadDrafts(){
+  const key=draftKey();if(!key)return;
+  try{
+    const rows=JSON.parse(localStorage.getItem(key)||'[]');
+    if(Array.isArray(rows))for(const row of rows){
+      if(!row||![...writableFields,...reflectionFields].includes(row.field)||typeof row.value!=='string'||typeof row.base!=='string'||row.value.length>fieldLimit(row.field))continue;
+      if(fieldValue(serverTeam.state,row.field)===row.value)continue;
+      answerDrafts.set(row.field,row.value);draftBases.set(row.field,row.base);
+    }
+  }catch{draftStorageFailed=true}
+  recoveredDrafts=answerDrafts.size>0;
+  sync=answerDrafts.size?'saving':'saved';
+}
+function renderRecovery(){
+  const box=document.querySelector('#draft-recovery');if(!box)return;
+  const visible=session?.role==='student'&&(fieldConflicts.size||draftStorageFailed||((recoveredDrafts||sync==='offline')&&answerDrafts.size));
+  box.hidden=!visible;if(!visible){box.innerHTML='';recoveryMarkup='';return}
+  const html=`<p>${esc(draftStorageFailed?L().draftStorageFailed:L().draftRetained)}</p>${[...fieldConflicts].map(([key,saved])=>`<section><h2>${esc(L()['writingTitle_'+key]||L()[key]||L().yourDraft)}</h2><p>${esc(L().fieldConflict)}</p><details open><summary>${esc(L().savedAnswer)}</summary><pre>${esc(saved)}</pre></details><details open><summary>${esc(L().yourDraft)}</summary><pre>${esc(answerDrafts.get(key)||'')}</pre></details><button type="button" data-draft-choice="mine" data-draft-key="${esc(key)}">${esc(L().keepMyDraft)}</button> <button type="button" data-draft-choice="saved" data-draft-key="${esc(key)}">${esc(L().useSavedAnswer)}</button></section>`).join('')}<button type="button" data-draft-retry>${esc(L().retrySave)}</button>`;
+  if(html!==recoveryMarkup){box.innerHTML=html;recoveryMarkup=html}
+}
+async function resolveDraft(key,choice){
+  if(!fieldConflicts.has(key))return;
+  // Compare against exactly the version the student reviewed, even if another
+  // teammate saves again before the choice reaches the server.
+  const reviewed=fieldConflicts.get(key);fieldConflicts.delete(key);
+  if(choice==='mine'){draftBases.set(key,reviewed);persistDrafts();await saveField(key,answerDrafts.get(key)).catch(()=>{})}
+  else{answerDrafts.delete(key);draftBases.delete(key);persistDrafts();sync=answerDrafts.size?'saving':'saved';render();updateSync()}
+}
+function retryDrafts(){
+  if(retryTimer||!answerDrafts.size||session?.role!=='student'||![...answerDrafts.keys()].some(key=>!fieldConflicts.has(key)&&!blockedReflection(key)))return;
+  const epoch=sessionEpoch;
+  retryTimer=setTimeout(()=>{retryTimer=null;if(epoch===sessionEpoch)flushAll().catch(()=>{})},1000);
+}
 // Page-only state: the current step, an open card or roll screen, the option picked in the
 // event, a die that is rolling or landing, and cards to highlight after a pick.
 const ui={step:'intro1',sub:null,selected:'',rolling:null,anim:null,flash:null};
@@ -83,13 +125,16 @@ function adopt(data){
   adoptLesson(data);
   session=data.authenticated?{role:data.role,name:data.name}:null;
   if(data.team){serverTeam=null;pending=[];adoptTeam(data.team)}
+  loadDrafts();
   if(data.roster)roster=data.roster;
   if(data.teams)teams=data.teams;
   if(data.presence)presenceFields=data.presence;
   if(typeof data.reveal==='boolean')reveal=data.reveal;
 }
 function clearStudentWork(){
+  persistDrafts();
   sessionEpoch++;
+  clearTimeout(retryTimer);retryTimer=null;draftBases.clear();fieldConflicts.clear();recoveredDrafts=false;draftStorageFailed=false;
   for(const timer of saveTimers.values())clearTimeout(timer);
   saveTimers.clear();savingFields.clear();answerDrafts.clear();pending=[];actionQueue=Promise.resolve();presenceSent=null;
   ui.sub=null;ui.selected='';ui.rolling=null;ui.anim=null;ui.flash=null;
@@ -113,7 +158,7 @@ function adoptLesson(data) {
 }
 function openStream(){
   stream?.close();stream=new ClassroomStream();
-  stream.onopen=()=>{sync='saved';updateSync()};
+  stream.onopen=()=>{sync=answerDrafts.size||pending.length?'saving':'saved';updateSync();retryDrafts()};
   stream.onerror=()=>{sync='offline';updateSync()};
   stream.addEventListener('presence',event=>{const data=JSON.parse(event.data);roster=data.roster;presenceFields=data.fields;updatePresence()});
   stream.addEventListener('revoked',event=>{
@@ -164,7 +209,11 @@ function onTeamEvent(event){
 }
 const fingerprint=x=>JSON.stringify(x&&[x.state.mapPoint,x.state.tech,x.state.civic,x.state.rolls,x.state.event,x.state.government,x.state.economy,x.state.beliefs,x.submittedAt]);
 
-function updateSync(){for(const el of document.querySelectorAll('#sync')){el.textContent=sync==='offline'?L().reconnecting:sync==='saving'?L().saving:L().save;el.className=`sync ${sync}`}}
+function updateSync(){
+  if(sync==='saved'&&answerDrafts.size)sync='saving';
+  for(const el of document.querySelectorAll('#sync')){el.textContent=fieldConflicts.size?L().reviewAnswer:sync==='offline'?L().reconnecting:sync==='saving'?L().saving:L().save;el.className=`sync ${sync}`}
+  renderRecovery();
+}
 function updatePresence(){
   for(const el of document.querySelectorAll('[data-presence]')){
     const names=(presenceFields[el.dataset.presence]||[]).filter(name=>name!==session?.name);
@@ -192,7 +241,7 @@ function collectDrafts(){
   for(const el of document.querySelectorAll('[data-field]'))if(saveTimers.has(el.dataset.field)||document.activeElement===el)drafts.set(el.dataset.field,el.value);
   return drafts;
 }
-function restoreDrafts(drafts){for(const [key,value] of drafts){const el=document.querySelector(`[data-field="${key}"]`);if(el&&el.value!==value)el.value=value}}
+function restoreDrafts(drafts){for(const [key,value] of drafts){const el=document.querySelector(`[data-field="${key}"]`);if(el&&el.value!==value)el.value=value;const count=document.querySelector(`[data-count-for="${key}"]`);if(count)count.textContent=fmt(L().charsLeft,fieldLimit(key)-value.length)}}
 // Replace only what changed. A text box is never replaced (its text belongs to the student),
 // and open <details> stay open.
 const holdsField=node=>node.nodeType===1&&(node.matches('[data-field]')||!!node.querySelector('[data-field]'));
@@ -227,6 +276,7 @@ function morph(container,html){
 const studentContext=()=>({team,lang,L:L(),ui,step:ui.step,seen,reveal,sync,roster,compact:narrow.matches,teamStepId:teamStep(team,reveal).id,rolling:ui.rolling,anim:ui.anim,flash:ui.flash});
 const teacherContext=()=>({L:L(),lang,teams:teams.map(t=>({...t,lessonVersion})),detail:teacherDetail?{...teacherDetail,lessonVersion}:null,newCodes,reveal,lessonVersion,lessonLocked,picked:pickedTeams});
 function render(){
+  if(composing){renderPending=true;return}
   closeTerm(false);
   document.documentElement.lang=lang;
   skipLink.textContent=L().skip;skipLink.hidden=!session;
@@ -235,6 +285,7 @@ function render(){
   if(session?.role==='student'&&ui.rolling)for(const el of app.querySelectorAll('button,input,textarea,select'))el.disabled=true;
   if(session?.role==='student'&&navigating)for(const el of app.querySelectorAll('[data-nav]'))el.disabled=true;
   restoreDrafts(drafts);updatePresence();restoreFocus(focus);
+  updateSync();
 }
 function patchTeacher(){
   if(showPoster){render();return}
@@ -252,7 +303,7 @@ function topbar(){return `<header class="topbar"><div class="brand"><span aria-h
 function authPage(){
   const t=L();
   return `<div class="auth-page"><img class="auth-map" src="${worldMap.image}" alt="" /><header class="topbar plain"><div class="brand"><span aria-hidden="true">✦</span> ${t.brand}</div><button type="button" class="lang" data-action="language">${t.language}</button></header>
-  <section class="auth-hero"><div class="auth-copy"><p class="eyebrow">GAME · ゲーム</p><h1>${rich(t.welcome,lang)}</h1><p class="tagline">${rich(t.tagline,lang)}</p><p>${rich(t.intro,lang)}</p></div>
+  <section class="auth-hero"><div class="auth-copy"><p class="eyebrow">${lang==='ja'?'ゲーム':'GAME'}</p><h1>${rich(t.welcome,lang)}</h1><p class="tagline">${rich(t.tagline,lang)}</p><p>${rich(t.intro,lang)}</p></div>
   <div class="auth-card"><div class="auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="${authMode==='student'}" class="${authMode==='student'?'active':''}" data-mode="student">${t.join}</button><button type="button" role="tab" aria-selected="${authMode==='teacher'}" class="${authMode==='teacher'?'active':''}" data-mode="teacher">${t.teacher}</button></div>
   <form id="auth-form">${authMode==='student'?`<label>${t.code}<input name="code" autocomplete="off" required maxlength="24" placeholder="A-427" class="code-input" /></label><label>${t.name}<input name="name" autocomplete="off" required maxlength="60" /></label>`:`<label>${t.password}<input name="password" type="password" autocomplete="off" required /></label>`}
   ${authMode==='student'?`<p class="typing-note">✎ ${rich(t.typing,lang)}</p>`:''}<button class="btn primary full" type="submit">${authMode==='student'?t.enter:t.teacherEnter} <span aria-hidden="true">→</span></button></form></div></section></div>`;
@@ -430,9 +481,12 @@ async function doAct(value){
 
 // ---- Answers --------------------------------------------------------------------------
 function fieldInput(el){
-  const key=el.dataset.field;answerDrafts.set(key,el.value);sync='saving';updateSync();
+  const key=el.dataset.field;
+  if(!draftBases.has(key))draftBases.set(key,fieldValue(serverTeam.state,key));
+  answerDrafts.set(key,el.value);persistDrafts();sync='saving';updateSync();
   const count=document.querySelector(`[data-count-for="${key}"]`);if(count)count.textContent=fmt(L().charsLeft,fieldLimit(key)-el.value.length);
-  clearTimeout(saveTimers.get(key));saveTimers.set(key,setTimeout(()=>saveField(key,answerDrafts.get(key)).catch(()=>{}),650));
+  clearTimeout(saveTimers.get(key));
+  if(!composing&&!fieldConflicts.has(key))saveTimers.set(key,setTimeout(()=>saveField(key,answerDrafts.get(key)).catch(()=>{}),650));
 }
 function saveField(key,value){
   const epoch=sessionEpoch;
@@ -440,13 +494,23 @@ function saveField(key,value){
   const request=(savingFields.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{
     if(epoch!==sessionEpoch)return;
     try{
-      const data=await api('/api/team/action',{type:reflectionFields.includes(key)?'reflectionAnswer':'field',key,value});if(epoch!==sessionEpoch)return;adoptTeam(data.team);roster=data.roster;
+      if(fieldConflicts.has(key))throw Object.assign(new Error(L().fieldConflict),{code:'fieldConflict'});
+      const baseValue=draftBases.get(key)??fieldValue(serverTeam.state,key);
+      const data=await api('/api/team/action',{type:reflectionFields.includes(key)?'reflectionAnswer':'field',key,value,baseValue});if(epoch!==sessionEpoch)return;adoptTeam(data.team);roster=data.roster;
+      draftBases.set(key,value);
       if(answerDrafts.get(key)===value)answerDrafts.delete(key);
+      persistDrafts();
       sync=answerDrafts.size?'saving':'saved';updateSync();
       // The Next button depends on whether the answer is filled.
       const nextButton=document.querySelector('[data-nav="next"]');if(nextButton)nextButton.disabled=!!ui.rolling||!stepDone(ui.step,team,seen,reveal);
     }catch(error){
       if(epoch!==sessionEpoch)return;
+      if(error.code==='fieldConflict'){
+        if(error.team)adoptTeam(error.team);
+        fieldConflicts.set(key,fieldValue(serverTeam.state,key));persistDrafts();sync='saving';updateSync();
+        document.querySelector('#draft-recovery')?.scrollIntoView({behavior:'smooth',block:'start'});
+        throw new Error(L().fieldConflict,{cause:error});
+      }
       sync=error.code==='submitted'?'saved':'offline';updateSync();
       const hint=error.code==='submitted'?L().submittedSaveFailed:reflectionFields.includes(key)&&['reflectionClosed','reflectionSubmitted','reflectionNeedsSubmission'].includes(error.code)?L().reflectionSaveFailed:L().saveFailed;
       toast(hint,'error');throw new Error(hint,{cause:error});
@@ -459,10 +523,19 @@ function saveField(key,value){
 const blockedReflection=key=>reflectionFields.includes(key)&&(!submitted()||!reveal||!!team.state.reflection?.submittedAt);
 async function flushField(key){if(blockedReflection(key))return;if(answerDrafts.has(key))await saveField(key,answerDrafts.get(key));else if(savingFields.has(key))await savingFields.get(key)}
 async function flushAll(){
+  const epoch=sessionEpoch;
+  if(composing)throw new Error(L().saving);
   for(const timer of saveTimers.values())clearTimeout(timer);saveTimers.clear();
   await Promise.all([...savingFields].map(([key,request])=>request.catch(error=>{if(!blockedReflection(key))throw error})));
   // Closed historical drafts stay on this device without trapping the student here.
-  for(const [key,value] of [...answerDrafts])if(!blockedReflection(key))await saveField(key,value);
+  while(epoch===sessionEpoch){
+    if(composing)throw new Error(L().saving);
+    const fields=[...answerDrafts.keys()].filter(key=>!blockedReflection(key));if(!fields.length)break;
+    for(const key of fields){
+      if(epoch!==sessionEpoch)return;
+      if(answerDrafts.has(key))await saveField(key,answerDrafts.get(key));
+    }
+  }
 }
 async function postPresence(field){if(presenceSent===field)return;presenceSent=field;try{await api('/api/team/presence',{field})}catch{}}
 
@@ -536,7 +609,7 @@ async function teacherAction(id){
 async function onAction(el){
   const id=el.dataset.action;
   try{
-    if(id==='language'){await actionQueue;await flushAll();lang=lang==='en'?'ja':'en';localStorage.setItem('civ_lang',lang);render()}
+    if(id==='language'){await actionQueue;await flushAll();lang=lang==='en'?'ja':'en';try{localStorage.setItem('civ_lang',lang)}catch{}render()}
     else if(id==='logout'){
       await actionQueue;await flushAll();answerDrafts.clear();await api('/api/logout',{});stream?.close();stream=null;
       clearStudentWork();session=null;team=null;serverTeam=null;teacherDetail=null;teacherDetailId=null;showPoster=false;pickedTeams.clear();presenceFields={};render();
@@ -626,7 +699,16 @@ app.addEventListener('change',event=>{
   else if(event.target.checked)pickedTeams.add(Number(pick));else pickedTeams.delete(Number(pick));
   patchTeacher();
 });
-app.addEventListener('focusin',event=>{if([...writableFields,...reflectionFields].includes(event.target.dataset?.field))postPresence(event.target.dataset.field)});
+app.addEventListener('focusin',event=>{const key=event.target.dataset?.field;if([...writableFields,...reflectionFields].includes(key)){if(!answerDrafts.has(key))draftBases.set(key,event.target.value);postPresence(key)}});
+app.addEventListener('compositionstart',()=>{composing=true;for(const timer of saveTimers.values())clearTimeout(timer);saveTimers.clear()});
+app.addEventListener('compositionend',event=>{composing=false;if(event.target.dataset?.field)fieldInput(event.target);if(renderPending){renderPending=false;render()}});
+document.querySelector('#draft-recovery')?.addEventListener('click',event=>{
+  const choice=event.target.closest('[data-draft-choice]');
+  if(choice)resolveDraft(choice.dataset.draftKey,choice.dataset.draftChoice);
+  else if(event.target.closest('[data-draft-retry]'))flushAll().catch(()=>{});
+});
+window.addEventListener('online',retryDrafts);
+window.addEventListener('beforeunload',event=>{if(answerDrafts.size){persistDrafts();event.preventDefault();event.returnValue=''}});
 // Short definitions float beside tree cards on hover or keyboard focus; a tap or click opens the
 // full explanation. The tip lives outside the scrolling tree so its edges never clip it.
 let floatTip=null;

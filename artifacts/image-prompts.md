@@ -1,5 +1,7 @@
 # Atmospheric region illustrations
 
+These assets are shared by Full and Short lessons. This file preserves the original generation prompts and source paths; activity instructions are in [README.md](../README.md).
+
 Created 2026-10-01 using the built-in `image_gen.imagegen` tool. Eleven separate generation calls; no CLI or API fallback was used. These are imagined naturalistic educational landscape illustrations, not archival photographs or reconstructions of named archaeological sites. Documentary photographs and their attribution remain intact.
 
 The generated PNG outputs were copied to the corresponding workspace asset folder and encoded as WebP at quality 94 without resizing, cropping, recoloring, or other visual changes. Original generated PNGs remain at the tool's output paths. Native dimensions are preserved (approximately 1672 × 941 pixels, with a one-pixel height variation on some outputs). The hero captions identify them as AI-generated imagined scenes.

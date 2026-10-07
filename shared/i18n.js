@@ -534,6 +534,18 @@ Object.assign(ja, {
   classDiscussionDone:'活動を終える', lessonComplete:'活動完了', reflectionDisabled:'このバージョンでは、歴史の振り返りはクラス全体で話し合います。'
 });
 
+Object.assign(en,{
+  draftRetained:'You have unsaved text on this device. Review any conflicting answers, then retry saving.',
+  draftStorageFailed:'This browser cannot keep a recovery copy. Keep this page open until your answers save.',
+  fieldConflict:'A teammate saved a different answer. Both versions are below. Choose which one to use.',
+  savedAnswer:'Saved team answer',yourDraft:'Your unsaved draft',keepMyDraft:'Save my draft instead',useSavedAnswer:'Use the team answer',retrySave:'Retry saving',reviewAnswer:'Review conflicting answer'
+});
+Object.assign(ja,{
+  draftRetained:'この端末に未保存の文章があります。回答の競合を確認してから、保存を再試行してください。',
+  draftStorageFailed:'このブラウザーでは復元用の文章を保存できません。回答の保存が終わるまでページを閉じないでください。',
+  fieldConflict:'チームの人が別の回答を保存しました。両方を確認し、使う回答を選んでください。',
+  savedAnswer:'保存済みのチームの回答',yourDraft:'あなたの未保存の文章',keepMyDraft:'自分の文章を保存する',useSavedAnswer:'チームの回答を使う',retrySave:'保存を再試行',reviewAnswer:'回答の競合を確認'
+});
 export const dictionary = { en, ja };
 // Labels for the submission gaps and teacher rows come from the same dictionary.
 export const gapKeys = ['region','tech','civic','event','eventResolved','eventAnswer','geographyAnswer','government','governmentAnswer','economy','economyAnswer','beliefs','beliefAnswer','shapeAnswer','notChosenAnswer','civName'];

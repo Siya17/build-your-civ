@@ -8,6 +8,7 @@ import { dictionary } from '../shared/i18n.js';
 import { trees } from '../shared/cards.js';
 import { worldMap } from '../shared/regions.js';
 import { studentPage } from '../public/screens.js';
+import { esc } from '../public/ui.js';
 
 // Exercise the real browser action/save functions without a browser dependency. Only
 // rendering, transitions and the network boundary are replaced; rules stay shared.
@@ -20,34 +21,130 @@ const scriptedDice = (...faces) => () => faces.shift();
 const makeTeam = (state = game.normalizeState({ ...game.initialState(), mapPoint:'G', fixedPoint:'G' }), id = 1) => ({ id, name:`Team ${id}`, createdAt:`2026-10-01:${id}`, submittedAt:null, version:1, state, lessonVersion:'full' });
 const picked = (...ids) => ids.reduce((state,id) => game.applyAction(state, { type:'pick', tree:id === 'laws' ? 'civic' : 'tech', id }), makeTeam().state);
 
-function client(api = async () => { throw new Error('unexpected request'); }, initial = makeTeam(), { reducedMotion = true } = {}) {
+function client(api = async () => { throw new Error('unexpected request'); }, initial = makeTeam(), { reducedMotion = true, local = storage() } = {}) {
   const notices = [], timers = new Map(); let timerId = 0;
   const element = () => ({ hidden:true, addEventListener() {} });
   const elements = new Map(['#app','#notice','#skip-link','#term-pop'].map(id => [id,element()]));
+  const recovery={hidden:true,writes:0,markup:'',addEventListener(){},scrollIntoView(){},set innerHTML(value){this.markup=value;this.writes++},get innerHTML(){return this.markup}};
+  elements.set('#draft-recovery',recovery);
   const context = vm.createContext({
-    ...game, ...flow, dictionary, trees, worldMap,
+    ...game, ...flow, dictionary, trees, worldMap, esc,
     document:{ querySelector:key => elements.get(key) ?? null, querySelectorAll:() => [], addEventListener() {} },
-    window:{ matchMedia:query => ({ matches:query.includes('reduced-motion') && reducedMotion, addEventListener() {} }) },
-    localStorage:storage(), sessionStorage:storage(), Element:class {},
+    window:{ addEventListener(){}, matchMedia:query => ({ matches:query.includes('reduced-motion') && reducedMotion, addEventListener() {} }) },
+    localStorage:local, sessionStorage:storage(), Element:class {},
     setTimeout:(callback,delay) => { timers.set(++timerId,{ callback,delay }); return timerId; },
     clearTimeout:id => timers.delete(id), request:api, noticeSink:(message,type) => notices.push({ message,type }),
     ClassroomStream:class { constructor(){this.listeners=new Map()} addEventListener(name,listener){this.listeners.set(name,listener)} close(){} }
   });
   vm.runInContext(`${source}\n
-    render=()=>{}; updateSync=()=>{};
+    const drawRecovery=renderRecovery;
+    render=()=>{}; renderRecovery=()=>{};
     transition=async(direction,change)=>change();
     toast=(message,type)=>noticeSink(message,type); api=request;
-    globalThis.client={adopt,act,go,goNext,saveField,fieldInput,flushAll,withDie,doAct,openStream,
+    globalThis.client={adopt,act,go,goNext,saveField,fieldInput,flushAll,withDie,doAct,openStream,resolveDraft,drawRecovery,
+      streamOpen(){stream.onopen()},
       streamEvent(name,data){stream.listeners.get(name)({data:JSON.stringify(data)})},
       setStep(step){ui.step=step},
-      snapshot(){return {team,pending,drafts:[...answerDrafts],saving:[...savingFields.keys()],ui,seen:[...seen],sync,reveal}},
+      snapshot(){return {team,pending,drafts:[...answerDrafts],conflicts:[...fieldConflicts],saving:[...savingFields.keys()],ui,seen:[...seen],sync,reveal}},
       idle(){return actionQueue}
     };`, context, { filename:'public/app.js' });
   const app = context.client;
   app.adopt({ authenticated:true, role:'student', name:'Alice', team:initial, roster:[], reveal:false });
-  return { app, notices, timers, snapshot:() => plain(app.snapshot()) };
+  return { app, notices, timers, recovery, snapshot:() => plain(app.snapshot()) };
 }
 const typeAnswer = (h,key,value) => h.app.fieldInput({ dataset:{ field:key }, value });
+
+test('failed drafts survive refresh, retain their original base, and stay isolated by student and team',async()=>{
+  const local=storage(),initial=makeTeam();
+  const h=client(async()=>{throw new Error('offline')},initial,{local});
+  typeAnswer(h,'geographyAnswer','Keep my 日本語 answer');
+  await h.app.saveField('geographyAnswer','Keep my 日本語 answer').catch(()=>{});
+  const newer={...initial,version:2,state:{...initial.state,geographyAnswer:'Teammate answer'}};
+  let sent;
+  const refreshed=client(async(path,body)=>{sent=body;throw Object.assign(new Error('conflict'),{code:'fieldConflict',team:newer})},newer,{local});
+  assert.deepEqual(refreshed.snapshot().drafts,[['geographyAnswer','Keep my 日本語 answer']]);
+  await refreshed.app.flushAll().catch(()=>{});
+  assert.equal(sent.baseValue,'');
+  assert.deepEqual(refreshed.snapshot().conflicts,[['geographyAnswer','Teammate answer']]);
+  refreshed.app.adopt({authenticated:true,role:'student',name:'Bob',team:newer});
+  assert.deepEqual(refreshed.snapshot().drafts,[]);
+  assert.deepEqual(client(undefined,makeTeam(undefined,2),{local}).snapshot().drafts,[]);
+});
+
+test('reconnect never claims a failed draft is saved and schedules a retry',async()=>{
+  let server=makeTeam(),offline=true;
+  const h=client(async(path,body)=>{if(offline)throw new Error('offline');server={...server,version:2,state:game.applyAction(server.state,body)};return {team:server,roster:[]}});
+  typeAnswer(h,'geographyAnswer','Recovered answer');
+  await h.app.saveField('geographyAnswer','Recovered answer').catch(()=>{});
+  h.app.openStream();h.app.streamOpen();
+  assert.equal(h.snapshot().sync,'saving');assert.equal(h.snapshot().drafts.length,1);
+  offline=false;const retry=[...h.timers.values()].find(t=>t.delay===1000);assert(retry);retry.callback();
+  await h.app.flushAll();
+  assert.equal(h.snapshot().sync,'saved');assert.equal(h.snapshot().drafts.length,0);
+});
+
+test('same-field conflicts require an explicit choice and a second intervening edit conflicts again',async()=>{
+  let server=makeTeam();
+  const h=client(async(path,body)=>{
+    try{server={...server,version:server.version+1,state:game.applyAction(server.state,body)};return {team:server,roster:[]}}
+    catch(error){error.team=server;throw error}
+  },server);
+  typeAnswer(h,'geographyAnswer','My draft');
+  server={...server,version:2,state:{...server.state,geographyAnswer:'First teammate'}};
+  await h.app.flushAll().catch(()=>{});
+  assert.equal(server.state.geographyAnswer,'First teammate');
+  server={...server,version:3,state:{...server.state,geographyAnswer:'Second teammate'}};
+  await h.app.resolveDraft('geographyAnswer','mine');
+  assert.equal(server.state.geographyAnswer,'Second teammate');
+  assert.deepEqual(h.snapshot().conflicts,[['geographyAnswer','Second teammate']]);
+  await h.app.resolveDraft('geographyAnswer','mine');
+  assert.equal(server.state.geographyAnswer,'My draft');assert.deepEqual(h.snapshot().drafts,[]);
+});
+
+test('choosing the saved answer clears the recovery copy without writing over it',async()=>{
+  const local=storage(),initial=makeTeam(),newer={...initial,version:2,state:{...initial.state,geographyAnswer:'Team answer'}};
+  let writes=0;
+  const h=client(async()=>{writes++;throw Object.assign(new Error('conflict'),{code:'fieldConflict',team:newer})},initial,{local});
+  typeAnswer(h,'geographyAnswer','Local draft');await h.app.flushAll().catch(()=>{});
+  await h.app.resolveDraft('geographyAnswer','saved');
+  assert.equal(writes,1);assert.deepEqual(h.snapshot().drafts,[]);
+  assert.deepEqual(client(undefined,newer,{local}).snapshot().drafts,[]);
+});
+
+test('lost save acknowledgement can be retried without conflicting with its own saved text',async()=>{
+  let server=makeTeam(),first=true;
+  const h=client(async(path,body)=>{
+    server={...server,version:server.version+1,state:game.applyAction(server.state,body)};
+    if(first){first=false;throw new Error('response lost')}
+    return {team:server,roster:[]};
+  });
+  typeAnswer(h,'geographyAnswer','Saved but response lost');await h.app.flushAll().catch(()=>{});
+  await h.app.flushAll();assert.deepEqual(h.snapshot().drafts,[]);assert.equal(h.snapshot().sync,'saved');
+});
+
+test('repeated save-status updates preserve conflict buttons and expanded answers',async()=>{
+  const initial=makeTeam(),newer={...initial,version:2,state:{...initial.state,geographyAnswer:'Team text'}};
+  const h=client(async()=>{throw Object.assign(new Error('conflict'),{code:'fieldConflict',team:newer})});
+  typeAnswer(h,'geographyAnswer','My text');await h.app.flushAll().catch(()=>{});
+  h.app.drawRecovery();const writes=h.recovery.writes;
+  assert.match(h.recovery.markup,/My text/);assert.match(h.recovery.markup,/Team text/);
+  h.app.drawRecovery();assert.equal(h.recovery.writes,writes,'do not replace controls during focusout/click');
+});
+
+test('submission flushing includes text typed while the previous save is in flight',async()=>{
+  const sent=deferred(),release=deferred();let server=makeTeam(),calls=0;
+  const h=client(async(path,body)=>{calls++;if(calls===1){sent.resolve();await release.promise}server={...server,version:server.version+1,state:game.applyAction(server.state,body)};return {team:server,roster:[]}});
+  typeAnswer(h,'geographyAnswer','First');const flush=h.app.flushAll();await sent.promise;
+  typeAnswer(h,'geographyAnswer','Latest while saving');release.resolve();await flush;
+  assert.equal(calls,2);assert.equal(server.state.geographyAnswer,'Latest while saving');assert.deepEqual(h.snapshot().drafts,[]);
+});
+
+test('blocked browser storage does not stop typing or saving',async()=>{
+  let server=makeTeam();const local={getItem(){throw new Error('blocked')},setItem(){throw new Error('blocked')}};
+  const h=client(async(path,body)=>{server={...server,version:2,state:game.applyAction(server.state,body)};return {team:server,roster:[]} },server,{local});
+  typeAnswer(h,'geographyAnswer','Still saves online');h.app.drawRecovery();assert.match(h.recovery.markup,/cannot keep a recovery copy/);
+  await h.app.flushAll();assert.equal(server.state.geographyAnswer,'Still saves online');assert.deepEqual(h.snapshot().drafts,[]);
+});
 
 test('rapid queued picks save drafts first and send no stale expectedVersion', async () => {
   let server = makeTeam(); const requests = [];
