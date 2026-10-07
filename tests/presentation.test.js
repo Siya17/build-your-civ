@@ -11,6 +11,7 @@ import { posterMarkup } from '../public/poster.js';
 import { printablePosters } from '../public/printing.js';
 import { plain, rich, fmt } from '../public/ui.js';
 import { eventPromptKind } from '../public/prompts.js';
+import { steps } from '../shared/flow.js';
 
 const base = normalizeState({...initialState(), mapPoint:'G', fixedPoint:'G', tech:['pottery'], civic:['laws']});
 const team = (state = base, id = 1) => ({id, name:`Team ${id}`, createdAt:'2026-10-01', submittedAt:null, state});
@@ -247,5 +248,18 @@ test('every development starts as normal; teams mark only easy or difficult ones
     assert.match(prices, /mark-result m-easy ok/);
     assert.match(prices, /mark-result m-easy differs/);
     assert.match(prices, /mark-result m-normal differs/);
+  }
+});
+
+test('no screen shows raw furigana or glossary markup in either language or lesson version', () => {
+  for (const lessonVersion of [undefined, 'short']) for (const point of Object.keys(regions)) for (const lang of ['en','ja']) {
+    const before = normalizeState({...base, mapPoint:point, fixedPoint:point});
+    const after = applyAction(before, {type:'eventRoll', confirm:{tech:before.tech, civic:before.civic}}, {rollDie:scriptedDice(6,1)});
+    // Screens after the roll need an event, so the unrolled state stops at the roll itself.
+    const rollIndex = steps.findIndex(step => step.id === 'eventRoll');
+    for (const [state, list] of [[before, steps.slice(0, rollIndex + 1)], [after, steps]]) for (const { id } of list) {
+      const text = studentPage({...context(id, state, lang), team:{...team(state), lessonVersion}}).replace(/<[^>]*>/g, ' ');
+      assert.doesNotMatch(text, /\{[^{}\s]+\|[^{}\s]+\}|\[\[[a-z]+/, `${lessonVersion ?? 'full'} lesson, ${id}, ${point}, ${lang}`);
+    }
   }
 });

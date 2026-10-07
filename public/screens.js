@@ -147,7 +147,7 @@ const screens = {
     if(shortLesson(team)){
       const detail = (title,body) => `<details class="lesson-details"><summary>${rich(title,lang)}</summary>${body}</details>`;
       return {title:rich(L.lessonOverview,lang),lead:rich(region.tagline[lang],lang),wide:true,
-        body:`<h2>${point} · ${rich(region.name[lang],lang,{terms:false})}</h2><p>${rich(region.area[lang],lang,{terms:false})}</p>${regionalMap(region,lang)}<section class="prose"><h2>${L.climateTitle}</h2><p>${rich(region.climate.summary[lang],lang)}</p><h2>${L.resourcesTitle}</h2><ul>${region.resources.map(item=>`<li><strong>${rich(item[lang],lang)}</strong>: ${rich(item.text[lang],lang)}</li>`).join('')}</ul><h2>${L.challengeTitle}</h2><ul>${region.challenge[lang].map(text=>`<li>${rich(text,lang)}</li>`).join('')}</ul></section>
+        body:`<h2>${point} · ${rich(region.name[lang],lang,{terms:false})}</h2><p>${rich(region.area[lang],lang,{terms:false})}</p>${regionalMap(region,lang)}<section class="prose"><h2>${rich(L.climateTitle,lang)}</h2><p>${rich(region.climate.summary[lang],lang)}</p><h2>${rich(L.resourcesTitle,lang)}</h2><ul>${region.resources.map(item=>`<li><strong>${rich(item[lang],lang)}</strong>: ${rich(item.text[lang],lang)}</li>`).join('')}</ul><h2>${rich(L.challengeTitle,lang)}</h2><ul>${region.challenge[lang].map(text=>`<li>${rich(text,lang)}</li>`).join('')}</ul></section>
         ${detail(L.landTitle,screens.land(ctx).body)}${detail(L.climateTitle,screens.climate(ctx).body)}${detail(L.resourcesTitle,screens.resources(ctx).body)}
 `,primary:next(L)};
     }
