@@ -117,6 +117,7 @@ function firstStep(){
 }
 
 async function boot(){
+  window.civBootStarted=true;
   try{const data=await api('/api/me');adopt(data);if(session?.role==='student'){loadSeen();ui.step=firstStep()}render();if(data.authenticated)openStream()}
   catch(error){app.innerHTML=`<div class="fatal">${esc(error.message)}</div>`}
 }

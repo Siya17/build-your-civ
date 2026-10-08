@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { initializeApp,deleteApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeFirestore } from 'firebase-admin/firestore';
+import { OAuth2Client } from 'google-auth-library';
 import { initializeTestEnvironment,assertFails,assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc,collection,getDoc,getDocs,setDoc,onSnapshot } from 'firebase/firestore';
 import { createFirestoreStore } from '../server/firestore-store.js';
@@ -15,7 +16,11 @@ let env,admin,db,store;
 before(async()=>{
   const [host,port]=process.env.FIRESTORE_EMULATOR_HOST.split(':');
   env=await initializeTestEnvironment({projectId,firestore:{host,port:Number(port),rules:readFileSync(new URL('../firestore.rules',import.meta.url),'utf8')}});
-  admin=initializeApp({projectId},'firestore-integration');db=getFirestore(admin);
+  admin=initializeApp({projectId},'firestore-integration');db=initializeFirestore(admin,{preferRest:true});
+  // REST's auth client initializes even for the emulator. Supply only the
+  // emulator owner token, so the tests never look up real Google credentials.
+  const emulatorAuth=new OAuth2Client();emulatorAuth.setCredentials({access_token:'owner'});
+  db.settings({auth:emulatorAuth});
 });
 beforeEach(async()=>{await env.clearFirestore();store=createFirestoreStore(db,{secret});await store.seedLetterTeams();});
 after(async()=>{await env?.cleanup();if(admin)await deleteApp(admin);});

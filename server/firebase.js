@@ -1,6 +1,6 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeFirestore } from 'firebase-admin/firestore';
 import { createFirestoreStore } from './firestore-store.js';
 
 let ready;
@@ -19,7 +19,9 @@ async function initialize() {
   if (!account?.project_id || !account.private_key || !account.client_email) throw new Error('Set FIREBASE_SERVICE_ACCOUNT to the service-account JSON');
   if (!config?.apiKey || !config.projectId || !config.appId || config.projectId !== account.project_id) throw new Error('Set FIREBASE_WEB_CONFIG for the same Firebase project');
   const admin = getApps().find(app => app.name === 'classroom') || initializeApp({ credential:cert(account), projectId:account.project_id }, 'classroom');
-  const store = createFirestoreStore(getFirestore(admin), {secret});
+  // The server only makes finite requests; browser listeners handle live updates.
+  // Use HTTPS instead of opening a gRPC channel during a serverless cold start.
+  const store = createFirestoreStore(initializeFirestore(admin, {preferRest:true}), {secret});
   store.realtimeToken = async (session, token) => ({
     mode:'firebase', config, teamId:session.teamId, role:session.role, uid:store.sessionId(token),
     token:await getAuth(admin).createCustomToken(store.sessionId(token), {role:session.role, teamId:session.teamId || 0})
